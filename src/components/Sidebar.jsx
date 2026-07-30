@@ -30,7 +30,7 @@ export default function Sidebar() {
     <>
       <button
         onClick={() => setSidebarOpen(!sidebarOpen)}
-        className="lg:hidden fixed top-4 left-4 z-40 w-10 h-10 rounded-full bg-white dark:bg-gray-800 shadow-lg flex items-center justify-center"
+        className="lg:hidden fixed top-4 left-4 z-40 w-10 h-10 rounded-full bg-white dark:bg-gray-800 shadow-lg flex items-center justify-center" style={{ top: 'calc(1rem + var(--safe-area-inset-top, 0px))' }}
       >
         <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
@@ -42,7 +42,7 @@ export default function Sidebar() {
           sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
-        <div className="p-5 border-b border-gray-100 dark:border-gray-800">
+        <div className="p-5 border-b border-gray-100 dark:border-gray-800 pt-safe">
           <div className="flex items-center justify-between mb-4">
             <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">AI 陪伴</h1>
             <button

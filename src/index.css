@@ -13,6 +13,13 @@
     @apply bg-white dark:bg-gray-950;
   }
 
+  :root {
+    --safe-area-inset-top: env(safe-area-inset-top, 0px);
+    --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-area-inset-left: env(safe-area-inset-left, 0px);
+    --safe-area-inset-right: env(safe-area-inset-right, 0px);
+  }
+
   ::-webkit-scrollbar {
     width: 4px;
   }
@@ -106,4 +113,25 @@
 @keyframes typingDot {
   0%, 80%, 100% { transform: scale(0.4); opacity: 0.4; }
   40% { transform: scale(1); opacity: 1; }
+}
+
+/* Safe area utilities */
+.pt-safe {
+  padding-top: var(--safe-area-inset-top);
+}
+
+.pb-safe {
+  padding-bottom: var(--safe-area-inset-bottom);
+}
+
+.pl-safe {
+  padding-left: var(--safe-area-inset-left);
+}
+
+.pr-safe {
+  padding-right: var(--safe-area-inset-right);
+}
+
+.header-safe {
+  padding-top: calc(var(--safe-area-inset-top) + 0.75rem);
 }

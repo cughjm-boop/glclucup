@@ -8,8 +8,19 @@ const DEFAULT_SETTINGS = {
   apiKey: '',
   baseUrl: 'https://api.deepseek.com',
   modelName: 'deepseek-chat',
-  ttsProvider: 'web-speech',
-  elevenLabsApiKey: '',
+  ttsProvider: 'web-speech', // 'web-speech' | 'aliyun' | 'tencent' | 'xunfei'
+  // 云 TTS 密钥
+  aliyunAccessKeyId: '',
+  aliyunAccessKeySecret: '',
+  aliyunAppKey: '',
+  tencentSecretId: '',
+  tencentSecretKey: '',
+  tencentAppId: '',
+  xunfeiAppId: '',
+  xunfeiApiKey: '',
+  xunfeiApiSecret: '',
+  // 云 TTS 音色
+  cloudVoiceId: '',
   theme: 'system', // 'system' | 'light' | 'dark'
 }
 
@@ -17,12 +28,15 @@ const DEFAULT_VOICE_SETTINGS = {
   autoPlay: true,
   voiceIndex: 0,
   voiceURI: '',
+  cloudVoiceId: '',
   speed: 1.0,
   pitch: 1.0,
+  volume: 1.0,
   clonedVoiceId: null,
   clonedVoiceName: '',
-  clonedProvider: null, // 'elevenlabs' | 'simulated' | null
+  clonedProvider: null, // 'aliyun' | 'tencent' | 'xunfei' | 'simulated' | null
   simulatedClone: null, // 模拟克隆的完整分析结果
+  fallbackReason: null, // 降级信息
 }
 
 // 应用主题到 document

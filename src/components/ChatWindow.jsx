@@ -3,7 +3,7 @@ import MessageBubble from './MessageBubble'
 import ChatInput from './ChatInput'
 import EmptyState from './EmptyState'
 import useStore from '../store/useStore'
-import { synthesizeSpeech } from '../services/tts'
+import { synthesizeSpeech, synthesizeCloud, playAudioBlob } from '../services/tts'
 
 export default function ChatWindow() {
   const {
@@ -13,21 +13,24 @@ export default function ChatWindow() {
     isLoading,
     sendMessage,
     voiceSettings,
+    settings,
     setView,
     exportChatHistory,
   } = useStore()
 
   const messagesEndRef = useRef(null)
   const voiceSettingsRef = useRef(voiceSettings)
+  const settingsRef = useRef(settings)
   const [showExportMenu, setShowExportMenu] = useState(false)
 
-  // 保持 voiceSettings 引用最新
+  // Keep refs updated
   voiceSettingsRef.current = voiceSettings
+  settingsRef.current = settings
 
   const character = characters.find((c) => c.id === currentCharacterId)
   const charMessages = currentCharacterId ? messages[currentCharacterId] || [] : []
 
-  // 获取角色语音设置（优先使用角色预设，回退到全局设置）
+  // Get effective voice settings (character preset overrides global)
   const getEffectiveVoiceSettings = useCallback(() => {
     if (character?.voiceSettings) {
       return { ...voiceSettingsRef.current, ...character.voiceSettings }
@@ -39,6 +42,7 @@ export default function ChatWindow() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [charMessages, isLoading])
 
+  // Auto play voice for assistant messages
   useEffect(() => {
     const effectiveSettings = getEffectiveVoiceSettings()
     if (!effectiveSettings.autoPlay) return
@@ -46,7 +50,16 @@ export default function ChatWindow() {
 
     const lastMsg = charMessages[charMessages.length - 1]
     if (lastMsg.role === 'assistant') {
-      synthesizeSpeech(lastMsg.content, effectiveSettings).catch(() => {})
+      const currentSettings = settingsRef.current
+      if (currentSettings.ttsProvider !== 'web-speech') {
+        synthesizeCloud(lastMsg.content, effectiveSettings, currentSettings)
+          .then((result) => {
+            if (result.blob) return playAudioBlob(result.blob)
+          })
+          .catch(() => {})
+      } else {
+        synthesizeSpeech(lastMsg.content, effectiveSettings).catch(() => {})
+      }
     }
   }, [charMessages.length, getEffectiveVoiceSettings])
 
@@ -72,7 +85,7 @@ export default function ChatWindow() {
   return (
     <div className="flex-1 flex flex-col h-full bg-ios-bg dark:bg-gray-950">
       {/* Chat header */}
-      <div className="flex-shrink-0 bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl border-b border-gray-100 dark:border-gray-800 px-4 py-3">
+      <div className="flex-shrink-0 bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl border-b border-gray-100 dark:border-gray-800 px-4 py-3 pt-safe">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full overflow-hidden bg-gradient-to-br from-ios-blue/20 to-purple-400/20 flex items-center justify-center">
             {character.avatar ? (

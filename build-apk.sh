@@ -40,6 +40,11 @@ cat > "$BUILD_DIR/AndroidManifest.xml" << MANIFEST
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.CAMERA" />
 
     <application
         android:allowBackup="true"
@@ -79,6 +84,12 @@ import android.webkit.WebSettings;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
+import android.webkit.ValueCallback;
+import android.webkit.PermissionRequest;
+import android.net.Uri;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.provider.MediaStore;
 import android.view.WindowManager;
 import android.view.WindowInsetsController;
 import android.view.WindowInsets;
@@ -95,37 +106,48 @@ import java.util.Map;
 public class MainActivity extends Activity {
     private WebView webView;
     private static final String LOCAL_HOST = "https://app.local/";
+    private static final int FILE_CHOOSER_REQUEST = 100;
+    private static final int PERMISSION_REQUEST = 200;
+    private ValueCallback<Uri[]> filePathCallback;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Fullscreen
+        // Edge-to-edge with safe area insets (don't hide status bar, let CSS handle it)
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 WindowInsetsController ctrl = getWindow().getInsetsController();
                 if (ctrl != null) {
-                    ctrl.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
-                    ctrl.setSystemBarsBehavior(
-                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                    // Show status bar with transparent background for safe area
+                    ctrl.show(WindowInsets.Type.statusBars());
+                    ctrl.setSystemBarsAppearance(
+                        WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS,
+                        WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS);
                 }
-            } else {
-                getWindow().setFlags(
-                    WindowManager.LayoutParams.FLAG_FULLSCREEN,
-                    WindowManager.LayoutParams.FLAG_FULLSCREEN
-                );
+                // Allow content to draw behind system bars
+                getWindow().setDecorFitsSystemWindows(false);
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
+                getWindow().setStatusBarColor(Color.TRANSPARENT);
+                getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
             }
         } catch (Exception ignored) {}
 
         webView = new WebView(this);
         webView.setWebViewClient(new LocalWebViewClient());
-        webView.setWebChromeClient(new WebChromeClient());
+        webView.setWebChromeClient(new ChromeClient());
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
-        settings.setAllowFileAccess(false);
-        settings.setAllowContentAccess(false);
+        settings.setAllowFileAccess(true);
+        settings.setAllowContentAccess(true);
+        settings.setAllowFileAccessFromFileURLs(true);
+        settings.setAllowUniversalAccessFromFileURLs(true);
         settings.setDatabaseEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setLoadWithOverviewMode(true);
@@ -143,6 +165,61 @@ public class MainActivity extends Activity {
             webView.loadDataWithBaseURL(LOCAL_HOST, html, "text/html", "UTF-8", null);
         } catch (Exception e) {
             webView.loadData("<h1>Failed to load app</h1>", "text/html", "UTF-8");
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSION_REQUEST) {
+            // Permission granted, retry file chooser if needed
+            if (filePathCallback != null) {
+                openFileChooser();
+            }
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == FILE_CHOOSER_REQUEST) {
+            if (filePathCallback != null) {
+                Uri[] results = null;
+                if (resultCode == RESULT_OK && data != null) {
+                    Uri result = data.getData();
+                    if (result != null) {
+                        results = new Uri[]{result};
+                    }
+                }
+                filePathCallback.onReceiveValue(results);
+                filePathCallback = null;
+            }
+        }
+    }
+
+    private void openFileChooser() {
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        String[] mimeTypes = {"image/*", "audio/*", "video/*", "application/json", "text/csv", "text/plain",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"};
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
+        startActivityForResult(Intent.createChooser(intent, "选择文件"), FILE_CHOOSER_REQUEST);
+    }
+
+    private class ChromeClient extends WebChromeClient {
+        @Override
+        public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback,
+                                          FileChooserParams fileChooserParams) {
+            MainActivity.this.filePathCallback = filePathCallback;
+            openFileChooser();
+            return true;
+        }
+
+        @Override
+        public void onPermissionRequest(PermissionRequest request) {
+            // Grant all permissions requested by WebView (camera, microphone, etc.)
+            request.grant(request.getResources());
         }
     }
 

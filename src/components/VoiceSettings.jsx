@@ -9,6 +9,10 @@ import {
   previewVoice,
   cloneVoice,
   synthesizeSpeech,
+  synthesizeCloud,
+  playAudioBlob,
+  stopAll,
+  TONE_PRESETS,
 } from '../services/tts'
 import {
   extractAudio,
@@ -21,18 +25,13 @@ import {
 } from '../services/extractAudio'
 import { diagnoseEnvironment, runDiagnosticTest, getDiagnosisReport } from '../services/envCheck'
 
-// 音调分类的中文映射
 const PITCH_CATEGORY_LABELS = {
-  low: '低音',
-  'medium-low': '中低音',
-  medium: '中音',
-  'medium-high': '中高音',
-  high: '高音',
+  low: '低音', 'medium-low': '中低音', medium: '中音', 'medium-high': '中高音', high: '高音',
 }
 
 export default function VoiceSettings({ voiceSettings: externalVoiceSettings, onChange: externalOnChange, compact }) {
   const store = useStore()
-  const { settings, updateVoiceSettings, updateSettings } = store
+  const { settings, updateVoiceSettings } = store
 
   const voiceSettings = externalVoiceSettings || store.voiceSettings
   const updateVoice = externalOnChange || updateVoiceSettings
@@ -65,8 +64,14 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
   const [showDiagDetail, setShowDiagDetail] = useState(false)
 
   // 模拟克隆结果
-  const [simulatedResult, setSimulatedResult] = useState(null) // { voiceSettings, analysis, matchReason }
+  const [simulatedResult, setSimulatedResult] = useState(null)
   const [isSimPreviewing, setIsSimPreviewing] = useState(false)
+
+  // 降级提示
+  const [fallbackInfo, setFallbackInfo] = useState(null)
+
+  const provider = settings.ttsProvider || 'web-speech'
+  const cloudPresets = TONE_PRESETS[provider] || []
 
   // 加载语音列表
   useEffect(() => {
@@ -78,13 +83,10 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
     }
 
     let cancelled = false
-
     async function loadVoices() {
       try {
         const [allVoices, zhVoices, groups] = await Promise.all([
-          getAvailableVoices(),
-          getChineseVoices(),
-          getVoiceGroups(),
+          getAvailableVoices(), getChineseVoices(), getVoiceGroups(),
         ])
         if (cancelled) return
         setVoices(allVoices)
@@ -96,30 +98,45 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
           setVoicesError('未检测到中文语音，将使用默认语音。可尝试安装中文语音包。')
         }
       } catch (err) {
-        if (!cancelled) {
-          setVoicesError('加载语音列表失败: ' + err.message)
-        }
+        if (!cancelled) setVoicesError('加载语音列表失败: ' + err.message)
       } finally {
         if (!cancelled) setVoicesLoading(false)
       }
     }
-
     loadVoices()
     return () => { cancelled = true }
   }, [])
 
-  // 环境检测
   useEffect(() => {
     const diag = diagnoseEnvironment()
     setEnvDiag(diag)
   }, [])
 
+  useEffect(() => {
+    return () => {
+      if (previewUrlRef.current) revokeAudioPreviewUrl(previewUrlRef.current)
+    }
+  }, [])
+
+  // 试听语音
   const handlePreview = async () => {
     setIsPreviewing(true)
+    setFallbackInfo(null)
     try {
-      await previewVoice(voiceSettings)
+      if (provider !== 'web-speech') {
+        const result = await synthesizeCloud('你好，这是我的声音，你觉得怎么样？', voiceSettings, settings)
+        if (result.blob) {
+          await playAudioBlob(result.blob)
+        }
+        if (result.fallbackReason) {
+          setFallbackInfo(result.fallbackReason)
+        }
+      } else {
+        await previewVoice(voiceSettings)
+      }
     } catch (err) {
       console.error('Preview error:', err)
+      setFallbackInfo(`试听失败: ${err.message}`)
     }
     setIsPreviewing(false)
   }
@@ -136,13 +153,6 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
     }
     setIsDiagRunning(false)
   }
-
-  // 清理预览 URL
-  useEffect(() => {
-    return () => {
-      if (previewUrlRef.current) revokeAudioPreviewUrl(previewUrlRef.current)
-    }
-  }, [])
 
   // 处理媒体文件选择
   const handleMediaFileSelect = async (e) => {
@@ -169,8 +179,7 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
 
     if (isVideoFile(file) && !isFFmpegSupported()) {
       setExtractError(
-        '当前浏览器不支持视频音频提取（需要 WebAssembly 和 SharedArrayBuffer 支持）。\n\n' +
-        '请尝试：\n1. 使用 Chrome 或 Edge 浏览器\n2. 将视频转换为 MP3/WAV 后上传'
+        '当前浏览器不支持视频音频提取（需要 WebAssembly 和 SharedArrayBuffer 支持）。\n\n请尝试：\n1. 使用 Chrome 或 Edge 浏览器\n2. 将视频转换为 MP3/WAV 后上传'
       )
       setExtractState('error')
       if (audioInputRef.current) audioInputRef.current.value = ''
@@ -217,30 +226,23 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
     setIsPreviewPlaying(false)
   }
 
-  // 确认克隆（支持有/无 API Key）
+  // 确认克隆
   const handleConfirmClone = async () => {
     if (!extractedAudio) return
-
     setExtractState('cloning')
     setCloneError('')
     setCloneSuccess('')
     setSimulatedResult(null)
 
     try {
-      const result = await cloneVoice(
-        extractedAudio.blob,
-        `角色声音_${Date.now()}`,
-        settings.elevenLabsApiKey || null
-      )
+      const result = await cloneVoice(extractedAudio.blob, `角色声音_${Date.now()}`, settings)
 
       if (result.provider === 'simulated') {
-        // 模拟克隆结果
         setSimulatedResult({
           voiceSettings: result.voiceSettings,
           analysis: result.analysis,
           matchReason: result.voiceSettings.matchReason,
         })
-        // 自动应用模拟克隆的语音设置
         updateVoice({
           voiceURI: result.voiceSettings.voiceURI,
           speed: result.voiceSettings.speed,
@@ -253,15 +255,14 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
         setCloneSuccess('模拟克隆完成！已根据音频特征匹配最佳浏览器语音。')
         setExtractState('idle')
       } else {
-        // ElevenLabs 克隆
         updateVoice({
           clonedVoiceId: result.voiceId,
-          clonedVoiceName: extractedAudio.fileName,
-          clonedProvider: 'elevenlabs',
+          clonedVoiceName: result.name || extractedAudio.fileName,
+          clonedProvider: result.provider,
           simulatedClone: null,
+          cloudVoiceId: result.voiceId,
         })
-        updateSettings({ ttsProvider: 'elevenlabs' })
-        setCloneSuccess('声音克隆成功！(模拟)')
+        setCloneSuccess(`声音克隆成功！(${result.provider})`)
         setExtractState('idle')
       }
     } catch (err) {
@@ -270,7 +271,6 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
     }
   }
 
-  // 试听模拟克隆效果
   const handleSimPreview = async () => {
     if (!simulatedResult) return
     setIsSimPreviewing(true)
@@ -310,13 +310,17 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
     ? 'text-sm font-semibold text-gray-700 dark:text-gray-300'
     : 'text-base font-semibold text-gray-900 dark:text-gray-100'
 
-  const hasApiKey = !!(settings.elevenLabsApiKey && settings.elevenLabsApiKey.trim())
+  const hasCloudConfig = provider !== 'web-speech' && (
+    (provider === 'aliyun' && settings.aliyunAppKey) ||
+    (provider === 'tencent' && settings.tencentAppId) ||
+    (provider === 'xunfei' && settings.xunfeiAppId)
+  )
 
   return (
     <div className={compact ? 'space-y-3' : 'space-y-5'}>
       <h3 className={headingClass}>{compact ? '语音预设' : '语音设置'}</h3>
 
-      {/* 环境检测横幅 */}
+      {/* Environment warning */}
       {envDiag && envDiag.level !== 'ok' && (
         <div className={`p-3 rounded-xl text-sm ${
           envDiag.level === 'error'
@@ -328,43 +332,18 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <div className="flex-1 min-w-0">
-              {envDiag.level === 'error' ? (
-                <p className="font-medium">
-                  语音需要本地运行（localhost 或 Live Server），当前环境不支持。
-                </p>
-              ) : (
-                <p>语音功能可能受限，建议在本地环境运行。</p>
-              )}
+              <p className="font-medium">语音需要本地运行，当前环境不支持。</p>
               <div className="flex gap-2 mt-1.5">
-                <button
-                  onClick={handleDiagnostic}
-                  disabled={isDiagRunning}
-                  className="text-xs underline hover:no-underline disabled:opacity-50"
-                >
+                <button onClick={handleDiagnostic} disabled={isDiagRunning} className="text-xs underline hover:no-underline disabled:opacity-50">
                   {isDiagRunning ? '检测中...' : '一键测试'}
                 </button>
                 {showDiagDetail && (
-                  <button
-                    onClick={() => setShowDiagDetail(false)}
-                    className="text-xs underline hover:no-underline"
-                  >
-                    收起
-                  </button>
+                  <button onClick={() => setShowDiagDetail(false)} className="text-xs underline hover:no-underline">收起</button>
                 )}
               </div>
-
-              {/* 诊断详情 */}
               {showDiagDetail && diagResult && (
                 <div className="mt-2 p-2 bg-white/50 dark:bg-black/30 rounded-lg text-xs font-mono whitespace-pre-wrap max-h-48 overflow-y-auto">
-                  {diagResult.error
-                    ? `诊断失败: ${diagResult.error}`
-                    : getDiagnosisReport()
-                  }
-                  {diagResult.synthesisTest && (
-                    <div className="mt-1">
-                      合成测试: {diagResult.synthesisTest.success ? '通过' : `失败 - ${diagResult.synthesisTest.message}`}
-                    </div>
-                  )}
+                  {diagResult.error ? `诊断失败: ${diagResult.error}` : getDiagnosisReport()}
                 </div>
               )}
             </div>
@@ -372,8 +351,20 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
         </div>
       )}
 
-      {/* 模拟克隆成功提示 */}
-      {cloneSuccess && voiceSettings.clonedProvider === 'simulated' && (
+      {/* Fallback info */}
+      {fallbackInfo && (
+        <div className="p-3 bg-amber-50 dark:bg-amber-900/30 rounded-xl">
+          <p className="text-sm text-amber-700 dark:text-amber-300 flex items-center gap-2">
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            {fallbackInfo}
+          </p>
+        </div>
+      )}
+
+      {/* Clone success */}
+      {cloneSuccess && (
         <div className="p-3 bg-green-50 dark:bg-green-900/30 rounded-xl">
           <p className="text-sm text-green-600 dark:text-green-400 flex items-center gap-2">
             <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -388,44 +379,13 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
               {simulatedResult.analysis && !simulatedResult.analysis.fallback && (
                 <p>分析: {PITCH_CATEGORY_LABELS[simulatedResult.analysis.pitchCategory] || '未知'}</p>
               )}
-              <button
-                onClick={handleSimPreview}
-                disabled={isSimPreviewing}
-                className="mt-1 text-xs text-green-600 dark:text-green-400 underline hover:no-underline disabled:opacity-50"
-              >
+              <button onClick={handleSimPreview} disabled={isSimPreviewing} className="mt-1 text-xs text-green-600 dark:text-green-400 underline hover:no-underline disabled:opacity-50">
                 {isSimPreviewing ? '试听中...' : '试听模拟克隆效果'}
               </button>
             </div>
           )}
         </div>
       )}
-
-      {/* Provider selection */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">TTS 提供商</label>
-        <div className="flex gap-2">
-          <button
-            onClick={() => updateSettings({ ttsProvider: 'web-speech' })}
-            className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all ${
-              settings.ttsProvider === 'web-speech'
-                ? 'bg-ios-blue text-white shadow-sm'
-                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
-            }`}
-          >
-            浏览器内置
-          </button>
-          <button
-            onClick={() => updateSettings({ ttsProvider: 'elevenlabs' })}
-            className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all ${
-              settings.ttsProvider === 'elevenlabs'
-                ? 'bg-ios-blue text-white shadow-sm'
-                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
-            }`}
-          >
-            ElevenLabs
-          </button>
-        </div>
-      </div>
 
       {/* Auto play toggle */}
       <div className="flex items-center justify-between">
@@ -439,37 +399,55 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
             voiceSettings.autoPlay ? 'bg-ios-green' : 'bg-gray-300 dark:bg-gray-600'
           }`}
         >
-          <span
-            className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform duration-200 ${
-              voiceSettings.autoPlay ? 'translate-x-5' : 'translate-x-0'
-            }`}
-          />
+          <span className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform duration-200 ${
+            voiceSettings.autoPlay ? 'translate-x-5' : 'translate-x-0'
+          }`} />
         </button>
       </div>
 
+      {/* Cloud voice presets */}
+      {provider !== 'web-speech' && cloudPresets.length > 0 && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            云平台音色选择
+          </label>
+          <select
+            value={voiceSettings.cloudVoiceId || settings.cloudVoiceId || ''}
+            onChange={(e) => updateVoice({ cloudVoiceId: e.target.value })}
+            className="ios-input"
+          >
+            <option value="">-- 使用全局默认音色 --</option>
+            {cloudPresets.map((tone) => (
+              <option key={tone.id} value={tone.id}>
+                {tone.name} ({tone.gender === 'female' ? '女' : '男'}) - {tone.desc}
+              </option>
+            ))}
+          </select>
+          {!hasCloudConfig && (
+            <p className="text-xs text-amber-500 dark:text-amber-400 mt-1">
+              请在设置中填写 {provider === 'aliyun' ? '阿里云' : provider === 'tencent' ? '腾讯云' : '讯飞'} 密钥后启用云端语音
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Web Speech settings */}
-      {settings.ttsProvider === 'web-speech' && (
+      {provider === 'web-speech' && (
         <div className="space-y-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-xl">
           {!speechSupported && (
             <div className="p-3 bg-red-50 dark:bg-red-900/30 rounded-xl">
-              <p className="text-sm text-red-600 dark:text-red-400">
-                当前浏览器不支持语音合成功能。请使用 Chrome 或 Edge 浏览器以启用语音功能。
-              </p>
+              <p className="text-sm text-red-600 dark:text-red-400">当前浏览器不支持语音合成功能。请使用 Chrome 或 Edge 浏览器以启用语音功能。</p>
             </div>
           )}
-
           {speechSupported && voicesError && (
             <div className="p-3 bg-amber-50 dark:bg-amber-900/30 rounded-xl">
               <p className="text-sm text-amber-700 dark:text-amber-300">{voicesError}</p>
             </div>
           )}
 
-          {/* 语音选择 */}
           {speechSupported && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                语音选择
-              </label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">语音选择</label>
               {voicesLoading ? (
                 <div className="flex items-center gap-2 text-sm text-gray-400 dark:text-gray-500 py-2">
                   <div className="w-4 h-4 border-2 border-gray-200 border-t-ios-blue rounded-full animate-spin" />
@@ -485,10 +463,7 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
                           <button
                             key={voice.voiceURI}
                             type="button"
-                            onClick={() => updateVoice({
-                              voiceURI: voice.voiceURI,
-                              voiceIndex: chineseVoices.indexOf(voice),
-                            })}
+                            onClick={() => updateVoice({ voiceURI: voice.voiceURI, voiceIndex: chineseVoices.indexOf(voice) })}
                             className={`text-left px-3 py-2 rounded-lg text-sm transition-colors ${
                               currentVoiceURI === voice.voiceURI
                                 ? 'bg-ios-blue text-white'
@@ -496,15 +471,12 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
                             }`}
                           >
                             <span className="font-medium block truncate">{voice.name}</span>
-                            <span className={`text-xs ${currentVoiceURI === voice.voiceURI ? 'text-white/70' : 'text-gray-400 dark:text-gray-500'}`}>
-                              {voice.lang}
-                            </span>
+                            <span className={`text-xs ${currentVoiceURI === voice.voiceURI ? 'text-white/70' : 'text-gray-400 dark:text-gray-500'}`}>{voice.lang}</span>
                           </button>
                         ))}
                       </div>
                     </div>
                   )}
-
                   {voiceGroups.en.length > 0 && (
                     <details className="group">
                       <summary className="text-xs text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300">
@@ -515,10 +487,7 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
                           <button
                             key={voice.voiceURI}
                             type="button"
-                            onClick={() => updateVoice({
-                              voiceURI: voice.voiceURI,
-                              voiceIndex: Math.max(0, chineseVoices.length + voiceGroups.en.indexOf(voice)),
-                            })}
+                            onClick={() => updateVoice({ voiceURI: voice.voiceURI })}
                             className={`text-left px-3 py-2 rounded-lg text-sm transition-colors ${
                               currentVoiceURI === voice.voiceURI
                                 ? 'bg-ios-blue text-white'
@@ -526,9 +495,7 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
                             }`}
                           >
                             <span className="font-medium block truncate">{voice.name}</span>
-                            <span className={`text-xs ${currentVoiceURI === voice.voiceURI ? 'text-white/70' : 'text-gray-400 dark:text-gray-500'}`}>
-                              {voice.lang}
-                            </span>
+                            <span className={`text-xs ${currentVoiceURI === voice.voiceURI ? 'text-white/70' : 'text-gray-400 dark:text-gray-500'}`}>{voice.lang}</span>
                           </button>
                         ))}
                       </div>
@@ -536,113 +503,93 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
                   )}
                 </div>
               ) : (
-                <p className="text-sm text-gray-400 dark:text-gray-500 py-2">
-                  没有可用的语音引擎。请确认系统已安装语音包。
-                </p>
+                <p className="text-sm text-gray-400 dark:text-gray-500 py-2">没有可用的语音引擎。请确认系统已安装语音包。</p>
               )}
-              {currentVoiceURI && (
-                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                  当前: {currentVoiceName}
-                </p>
-              )}
+              {currentVoiceURI && <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">当前: {currentVoiceName}</p>}
             </div>
-          )}
-
-          {/* 语速 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              语速: {voiceSettings.speed.toFixed(1)}x
-            </label>
-            <input
-              type="range"
-              min="0.5"
-              max="2"
-              step="0.1"
-              value={voiceSettings.speed}
-              onChange={(e) => updateVoice({ speed: parseFloat(e.target.value) })}
-              className="w-full accent-ios-blue"
-            />
-            <div className="flex justify-between text-xs text-gray-400 dark:text-gray-500">
-              <span>慢</span>
-              <span>正常</span>
-              <span>快</span>
-            </div>
-          </div>
-
-          {/* 音调 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              音调: {voiceSettings.pitch.toFixed(1)}
-            </label>
-            <input
-              type="range"
-              min="0.5"
-              max="2"
-              step="0.1"
-              value={voiceSettings.pitch}
-              onChange={(e) => updateVoice({ pitch: parseFloat(e.target.value) })}
-              className="w-full accent-ios-blue"
-            />
-            <div className="flex justify-between text-xs text-gray-400 dark:text-gray-500">
-              <span>低</span>
-              <span>正常</span>
-              <span>高</span>
-            </div>
-          </div>
-
-          {/* 试听按钮 */}
-          {speechSupported && (
-            <button
-              onClick={handlePreview}
-              disabled={isPreviewing || voices.length === 0}
-              className="w-full ios-button-secondary flex items-center justify-center gap-2 text-sm py-2.5 disabled:opacity-50"
-            >
-              {isPreviewing ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-ios-blue/30 border-t-ios-blue rounded-full animate-spin" />
-                  试听中...
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M17.95 6.05a8 8 0 010 11.9M6.5 8.8l4.7-3.5a.5.5 0 01.8.4v12.6a.5.5 0 01-.8.4L6.5 15.2H4a1 1 0 01-1-1v-4.4a1 1 0 011-1h2.5z" />
-                  </svg>
-                  试听语音
-                </>
-              )}
-            </button>
           )}
         </div>
       )}
 
-      {/* ElevenLabs / 声音克隆设置 */}
-      {settings.ttsProvider === 'elevenlabs' && (
-        <div className="space-y-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-xl">
-          {/* API Key（可选） */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-              ElevenLabs API Key <span className="text-xs text-gray-400 dark:text-gray-500 font-normal">（可选）</span>
-            </label>
-            <input
-              type="password"
-              value={settings.elevenLabsApiKey}
-              onChange={(e) => updateSettings({ elevenLabsApiKey: e.target.value })}
-              placeholder="sk_...（留空使用模拟克隆）"
-              className="ios-input"
-            />
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-              {hasApiKey
-                ? '已填写 Key，将使用 ElevenLabs 真实克隆'
-                : '未填写 Key，将使用浏览器模拟克隆'}
-              {' · '}
-              注册获取: <a href="https://elevenlabs.io" target="_blank" rel="noopener noreferrer" className="text-ios-blue underline">elevenlabs.io</a>
-            </p>
-          </div>
+      {/* Speed slider */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+          语速: {voiceSettings.speed.toFixed(1)}x
+        </label>
+        <input
+          type="range" min="0.5" max="2" step="0.1"
+          value={voiceSettings.speed}
+          onChange={(e) => updateVoice({ speed: parseFloat(e.target.value) })}
+          className="w-full accent-ios-blue"
+        />
+        <div className="flex justify-between text-xs text-gray-400 dark:text-gray-500">
+          <span>0.5x 慢</span><span>1.0x 正常</span><span>2.0x 快</span>
+        </div>
+      </div>
 
+      {/* Pitch slider */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+          音调: {voiceSettings.pitch.toFixed(1)}
+        </label>
+        <input
+          type="range" min="0.5" max="2" step="0.1"
+          value={voiceSettings.pitch}
+          onChange={(e) => updateVoice({ pitch: parseFloat(e.target.value) })}
+          className="w-full accent-ios-blue"
+        />
+        <div className="flex justify-between text-xs text-gray-400 dark:text-gray-500">
+          <span>0.5 低</span><span>1.0 正常</span><span>2.0 高</span>
+        </div>
+      </div>
+
+      {/* Volume slider */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+          音量: {((voiceSettings.volume || 1) * 100).toFixed(0)}%
+        </label>
+        <input
+          type="range" min="0" max="1" step="0.05"
+          value={voiceSettings.volume || 1}
+          onChange={(e) => updateVoice({ volume: parseFloat(e.target.value) })}
+          className="w-full accent-ios-blue"
+        />
+        <div className="flex justify-between text-xs text-gray-400 dark:text-gray-500">
+          <span>0%</span><span>50%</span><span>100%</span>
+        </div>
+      </div>
+
+      {/* Preview button */}
+      {speechSupported && (
+        <button
+          onClick={handlePreview}
+          disabled={isPreviewing || voices.length === 0}
+          className="w-full ios-button-secondary flex items-center justify-center gap-2 text-sm py-2.5 disabled:opacity-50"
+        >
+          {isPreviewing ? (
+            <>
+              <div className="w-4 h-4 border-2 border-ios-blue/30 border-t-ios-blue rounded-full animate-spin" />
+              试听中...
+            </>
+          ) : (
+            <>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M17.95 6.05a8 8 0 010 11.9M6.5 8.8l4.7-3.5a.5.5 0 01.8.4v12.6a.5.5 0 01-.8.4L6.5 15.2H4a1 1 0 01-1-1v-4.4a1 1 0 011-1h2.5z" />
+              </svg>
+              试听语音
+            </>
+          )}
+        </button>
+      )}
+
+      {/* Voice cloning */}
+      {!compact && (
+        <div className="space-y-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-xl">
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">声音克隆</label>
             <p className="text-xs text-gray-400 dark:text-gray-500 mb-2">
-              上传音频或视频文件，系统将分析音频特征并匹配最佳浏览器语音。视频将自动提取音频。
+              上传音频或视频文件，系统将分析音频特征并匹配最佳语音。视频将自动提取音频。
+              {provider !== 'web-speech' && hasCloudConfig && ' 已配置云端密钥，将使用云服务商声音复刻。'}
             </p>
 
             <input
@@ -652,10 +599,9 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
               onChange={handleMediaFileSelect}
               className="hidden"
             />
-
             <audio ref={previewAudioRef} onEnded={handlePreviewEnded} className="hidden" />
 
-            {/* 状态: idle */}
+            {/* idle */}
             {extractState === 'idle' && (
               <div>
                 <button
@@ -672,13 +618,12 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
                     音频: MP3 / WAV / AAC / OGG / FLAC  |  视频: MP4 / AVI / MOV / MKV / WebM
                   </p>
                 </button>
-
                 {voiceSettings.clonedVoiceId && (
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                    已克隆声音: {voiceSettings.clonedVoiceName || voiceSettings.clonedVoiceId}
-                    {voiceSettings.clonedProvider === 'simulated' && (
+                    已克隆: {voiceSettings.clonedVoiceName || voiceSettings.clonedVoiceId}
+                    {voiceSettings.clonedProvider && (
                       <span className="ml-1 px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400">
-                        模拟
+                        {voiceSettings.clonedProvider}
                       </span>
                     )}
                   </p>
@@ -686,7 +631,7 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
               </div>
             )}
 
-            {/* 状态: extracting */}
+            {/* extracting */}
             {extractState === 'extracting' && (
               <div className="p-4 bg-white dark:bg-gray-700 rounded-xl border border-gray-100 dark:border-gray-600 space-y-3">
                 <div className="flex items-center gap-3">
@@ -702,15 +647,12 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
                   </div>
                 </div>
                 <div className="w-full h-2 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-purple-500 rounded-full transition-all duration-300"
-                    style={{ width: `${extractProgress}%` }}
-                  />
+                  <div className="h-full bg-purple-500 rounded-full transition-all duration-300" style={{ width: `${extractProgress}%` }} />
                 </div>
               </div>
             )}
 
-            {/* 状态: preview */}
+            {/* preview */}
             {extractState === 'preview' && extractedAudio && (
               <div className="p-4 bg-white dark:bg-gray-700 rounded-xl border border-gray-100 dark:border-gray-600 space-y-3">
                 <div className="flex items-center gap-3">
@@ -724,18 +666,14 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
                     <p className="text-xs text-gray-400 dark:text-gray-500">
                       {extractedAudio.format.toUpperCase()} · {formatDuration(extractedAudio.duration)}
                       {extractedAudio.sourceType === 'video' && (
-                        <span className="ml-1 px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400">
-                          从视频提取
-                        </span>
+                        <span className="ml-1 px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400">从视频提取</span>
                       )}
                     </p>
                   </div>
                 </div>
-
                 <button
                   onClick={handlePreviewToggle}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 text-sm font-medium
-                             hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors"
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 text-sm font-medium hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors"
                 >
                   {isPreviewPlaying ? (
                     <>
@@ -755,30 +693,21 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
                     </>
                   )}
                 </button>
-
                 <div className="flex gap-2">
-                  <button
-                    onClick={handleResetExtract}
-                    className="flex-1 py-2 px-3 rounded-xl bg-gray-100 dark:bg-gray-600 text-gray-600 dark:text-gray-400 text-sm font-medium
-                               hover:bg-gray-200 dark:hover:bg-gray-500 transition-colors"
-                  >
+                  <button onClick={handleResetExtract} className="flex-1 py-2 px-3 rounded-xl bg-gray-100 dark:bg-gray-600 text-gray-600 dark:text-gray-400 text-sm font-medium hover:bg-gray-200 dark:hover:bg-gray-500 transition-colors">
                     重新选择
                   </button>
-                  <button
-                    onClick={handleConfirmClone}
-                    className="flex-1 py-2 px-3 rounded-xl bg-purple-500 text-white text-sm font-medium
-                               hover:bg-purple-600 transition-colors flex items-center justify-center gap-2"
-                  >
+                  <button onClick={handleConfirmClone} className="flex-1 py-2 px-3 rounded-xl bg-purple-500 text-white text-sm font-medium hover:bg-purple-600 transition-colors flex items-center justify-center gap-2">
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    {hasApiKey ? '确认克隆 (ElevenLabs)' : '模拟克隆'}
+                    {hasCloudConfig ? `克隆 (${provider})` : '模拟克隆'}
                   </button>
                 </div>
               </div>
             )}
 
-            {/* 状态: cloning */}
+            {/* cloning */}
             {extractState === 'cloning' && (
               <div className="p-4 bg-white dark:bg-gray-700 rounded-xl border border-gray-100 dark:border-gray-600">
                 <div className="flex items-center gap-3">
@@ -787,7 +716,7 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
                   </div>
                   <div>
                     <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      {hasApiKey ? '正在克隆声音...' : '正在分析音频并匹配语音...'}
+                      {hasCloudConfig ? '正在提交声音复刻任务...' : '正在分析音频并匹配语音...'}
                     </p>
                     <p className="text-xs text-gray-400 dark:text-gray-500">这可能需要几秒钟</p>
                   </div>
@@ -795,7 +724,7 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
               </div>
             )}
 
-            {/* 状态: error */}
+            {/* error */}
             {extractState === 'error' && extractError && (
               <div className="p-4 bg-red-50 dark:bg-red-900/30 rounded-xl space-y-3">
                 <div className="flex items-start gap-2">
@@ -804,11 +733,7 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
                   </svg>
                   <p className="text-sm text-red-600 dark:text-red-400 whitespace-pre-wrap">{extractError}</p>
                 </div>
-                <button
-                  onClick={handleResetExtract}
-                  className="w-full py-2 rounded-xl bg-red-100 dark:bg-red-800/50 text-red-600 dark:text-red-400 text-sm font-medium
-                             hover:bg-red-200 dark:hover:bg-red-800 transition-colors"
-                >
+                <button onClick={handleResetExtract} className="w-full py-2 rounded-xl bg-red-100 dark:bg-red-800/50 text-red-600 dark:text-red-400 text-sm font-medium hover:bg-red-200 dark:hover:bg-red-800 transition-colors">
                   重新选择文件
                 </button>
               </div>
@@ -817,11 +742,10 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
 
           <div className="p-3 bg-blue-50 dark:bg-blue-900/30 rounded-xl">
             <p className="text-xs text-blue-700 dark:text-blue-300 leading-relaxed">
-              {hasApiKey ? (
-                <>ElevenLabs API Key 已设置，将使用真实克隆服务。目前为模拟实现，如需启用真实 API 请在 <code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">src/services/tts.js</code> 中取消注释对应的 fetch 代码。</>
-              ) : (
-                <>未设置 API Key，使用模拟克隆：分析音频特征 → 匹配浏览器内置语音 → 自动调节语速和音调。填写 ElevenLabs API Key 后可切换为真实克隆。</>
-              )}
+              {hasCloudConfig
+                ? `已配置云端语音，将使用 ${provider === 'aliyun' ? '阿里云' : provider === 'tencent' ? '腾讯云' : '讯飞'} 声音复刻服务。`
+                : `未配置云端密钥，使用模拟克隆：分析音频特征 → 匹配浏览器内置语音 → 自动调节参数。前往设置页面配置云端密钥以启用真实声音复刻。`
+              }
             </p>
           </div>
         </div>
