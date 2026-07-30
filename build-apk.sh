@@ -82,6 +82,8 @@ import android.graphics.Color;
 import android.os.Build;
 
 public class MainActivity extends Activity {
+    private WebView webView;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -91,7 +93,7 @@ public class MainActivity extends Activity {
             WindowManager.LayoutParams.FLAG_FULLSCREEN
         );
 
-        WebView webView = new WebView(this);
+        webView = new WebView(this);
         webView.setWebViewClient(new WebViewClient());
         webView.setWebChromeClient(new WebChromeClient());
 
@@ -118,7 +120,6 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        WebView webView = (WebView) findViewById(android.R.id.content);
         if (webView != null && webView.canGoBack()) {
             webView.goBack();
         } else {
@@ -224,12 +225,11 @@ done
 
 echo "7. Done linking APK"
 
-# Step 8: Add DEX files to APK
-echo "8. Adding DEX files..."
-mkdir -p "$BUILD_DIR/apk/classes"
-cp "$BUILD_DIR/obj/classes.dex" "$BUILD_DIR/apk/classes/"
+# Step 8: Add DEX file to APK root (NOT in a subdirectory!)
+echo "8. Adding DEX file..."
+cp "$BUILD_DIR/obj/classes.dex" "$BUILD_DIR/apk/classes.dex"
 cd "$BUILD_DIR/apk"
-zip -q -r base.apk classes/
+zip -q base.apk classes.dex
 echo "8. Done adding DEX"
 
 # Step 9: Zipalign the APK (required for proper memory mapping)
