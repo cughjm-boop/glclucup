@@ -66,56 +66,75 @@ MANIFEST
 
 echo "1. Created AndroidManifest.xml"
 
-# Step 2: Create Java source (WebView wrapper)
+# Step 2: Create Java source (WebView wrapper with local HTTP server)
 cat > "$BUILD_DIR/MainActivity.java" << 'JAVA'
 package com.aichat.app;
 
 import android.app.Activity;
 import android.os.Bundle;
+import android.os.Build;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.WebSettings;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.view.WindowManager;
+import android.view.WindowInsetsController;
+import android.view.WindowInsets;
 import android.view.View;
 import android.graphics.Color;
-import android.os.Build;
+import java.io.InputStream;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 
 public class MainActivity extends Activity {
     private WebView webView;
+    private static final String LOCAL_HOST = "https://app.local/";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        getWindow().setFlags(
-            WindowManager.LayoutParams.FLAG_FULLSCREEN,
-            WindowManager.LayoutParams.FLAG_FULLSCREEN
-        );
+        // Fullscreen for modern Android (no deprecated API)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getWindow().setDecorFitsSystemWindows(false);
+            WindowInsetsController controller = getWindow().getInsetsController();
+            if (controller != null) {
+                controller.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                controller.setSystemBarsBehavior(
+                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        } else {
+            getWindow().setFlags(
+                WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                WindowManager.LayoutParams.FLAG_FULLSCREEN
+            );
+        }
 
         webView = new WebView(this);
-        webView.setWebViewClient(new WebViewClient());
+        webView.setWebViewClient(new LocalWebViewClient());
         webView.setWebChromeClient(new WebChromeClient());
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
-        settings.setAllowFileAccess(true);
-        settings.setAllowContentAccess(true);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
         settings.setDatabaseEnabled(true);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        }
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
         settings.setSupportZoom(false);
         settings.setBuiltInZoomControls(false);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
 
         webView.setBackgroundColor(Color.WHITE);
-
         setContentView(webView);
-        webView.loadUrl("file:///android_asset/index.html");
+
+        // Load via localhost to allow ES modules on Android 16+
+        webView.loadUrl(LOCAL_HOST + "index.html");
     }
 
     @Override
@@ -125,6 +144,58 @@ public class MainActivity extends Activity {
         } else {
             super.onBackPressed();
         }
+    }
+
+    private class LocalWebViewClient extends WebViewClient {
+        @Override
+        public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+            String url = request.getUrl().toString();
+            if (url.startsWith(LOCAL_HOST)) {
+                String path = url.substring(LOCAL_HOST.length());
+                if (path.isEmpty()) path = "index.html";
+                // Remove query string or fragment
+                int qi = path.indexOf('?');
+                if (qi >= 0) path = path.substring(0, qi);
+                int fi = path.indexOf('#');
+                if (fi >= 0) path = path.substring(0, fi);
+
+                try {
+                    InputStream is = getAssets().open(path);
+                    String mime = getMimeType(path);
+                    String encoding = isTextMime(mime) ? "UTF-8" : null;
+                    Map<String, String> headers = new HashMap<>();
+                    headers.put("Access-Control-Allow-Origin", "*");
+                    headers.put("Cross-Origin-Resource-Policy", "cross-origin");
+                    return new WebResourceResponse(mime, encoding, 200, "OK", headers, is);
+                } catch (IOException e) {
+                    return null;
+                }
+            }
+            return super.shouldInterceptRequest(view, request);
+        }
+    }
+
+    private static String getMimeType(String path) {
+        String lower = path.toLowerCase();
+        if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
+        if (lower.endsWith(".js")) return "application/javascript";
+        if (lower.endsWith(".css")) return "text/css";
+        if (lower.endsWith(".json")) return "application/json";
+        if (lower.endsWith(".png")) return "image/png";
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        if (lower.endsWith(".gif")) return "image/gif";
+        if (lower.endsWith(".svg")) return "image/svg+xml";
+        if (lower.endsWith(".woff")) return "font/woff";
+        if (lower.endsWith(".woff2")) return "font/woff2";
+        if (lower.endsWith(".wasm")) return "application/wasm";
+        if (lower.endsWith(".mp3")) return "audio/mpeg";
+        if (lower.endsWith(".wav")) return "audio/wav";
+        return "application/octet-stream";
+    }
+
+    private static boolean isTextMime(String mime) {
+        return mime.startsWith("text/") || mime.equals("application/javascript")
+            || mime.equals("application/json") || mime.equals("image/svg+xml");
     }
 }
 JAVA
@@ -145,7 +216,7 @@ echo "4. Converting to DEX..."
 "$BUILD_TOOLS/d8" \
     --lib "$PLATFORM/android.jar" \
     --output "$BUILD_DIR/obj" \
-    "$BUILD_DIR/obj/com/aichat/app/MainActivity.class" 2>&1
+    "$BUILD_DIR/obj/com/aichat/app/"*.class 2>&1
 
 echo "4. Done converting to DEX"
 
