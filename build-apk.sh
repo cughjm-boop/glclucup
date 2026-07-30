@@ -85,7 +85,10 @@ import android.view.WindowInsets;
 import android.view.View;
 import android.graphics.Color;
 import java.io.InputStream;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -97,21 +100,22 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Fullscreen for modern Android (no deprecated API)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            getWindow().setDecorFitsSystemWindows(false);
-            WindowInsetsController controller = getWindow().getInsetsController();
-            if (controller != null) {
-                controller.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
-                controller.setSystemBarsBehavior(
-                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        // Fullscreen
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                WindowInsetsController ctrl = getWindow().getInsetsController();
+                if (ctrl != null) {
+                    ctrl.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
+                    ctrl.setSystemBarsBehavior(
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                }
+            } else {
+                getWindow().setFlags(
+                    WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                    WindowManager.LayoutParams.FLAG_FULLSCREEN
+                );
             }
-        } else {
-            getWindow().setFlags(
-                WindowManager.LayoutParams.FLAG_FULLSCREEN,
-                WindowManager.LayoutParams.FLAG_FULLSCREEN
-            );
-        }
+        } catch (Exception ignored) {}
 
         webView = new WebView(this);
         webView.setWebViewClient(new LocalWebViewClient());
@@ -133,8 +137,13 @@ public class MainActivity extends Activity {
         webView.setBackgroundColor(Color.WHITE);
         setContentView(webView);
 
-        // Load via localhost to allow ES modules on Android 16+
-        webView.loadUrl(LOCAL_HOST + "index.html");
+        // Load HTML directly via loadDataWithBaseURL to avoid network request
+        try {
+            String html = readAsset("index.html");
+            webView.loadDataWithBaseURL(LOCAL_HOST, html, "text/html", "UTF-8", null);
+        } catch (Exception e) {
+            webView.loadData("<h1>Failed to load app</h1>", "text/html", "UTF-8");
+        }
     }
 
     @Override
@@ -146,6 +155,18 @@ public class MainActivity extends Activity {
         }
     }
 
+    private String readAsset(String path) throws IOException {
+        InputStream is = getAssets().open(path);
+        BufferedReader r = new BufferedReader(new InputStreamReader(is, "UTF-8"));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ((line = r.readLine()) != null) {
+            sb.append(line).append("\n");
+        }
+        r.close();
+        return sb.toString();
+    }
+
     private class LocalWebViewClient extends WebViewClient {
         @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
@@ -153,7 +174,6 @@ public class MainActivity extends Activity {
             if (url.startsWith(LOCAL_HOST)) {
                 String path = url.substring(LOCAL_HOST.length());
                 if (path.isEmpty()) path = "index.html";
-                // Remove query string or fragment
                 int qi = path.indexOf('?');
                 if (qi >= 0) path = path.substring(0, qi);
                 int fi = path.indexOf('#');
@@ -168,7 +188,8 @@ public class MainActivity extends Activity {
                     headers.put("Cross-Origin-Resource-Policy", "cross-origin");
                     return new WebResourceResponse(mime, encoding, 200, "OK", headers, is);
                 } catch (IOException e) {
-                    return null;
+                    return new WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", null,
+                        new ByteArrayInputStream("Not Found".getBytes()));
                 }
             }
             return super.shouldInterceptRequest(view, request);
@@ -179,6 +200,7 @@ public class MainActivity extends Activity {
         String lower = path.toLowerCase();
         if (lower.endsWith(".html") || lower.endsWith(".htm")) return "text/html";
         if (lower.endsWith(".js")) return "application/javascript";
+        if (lower.endsWith(".mjs")) return "application/javascript";
         if (lower.endsWith(".css")) return "text/css";
         if (lower.endsWith(".json")) return "application/json";
         if (lower.endsWith(".png")) return "image/png";
@@ -190,6 +212,7 @@ public class MainActivity extends Activity {
         if (lower.endsWith(".wasm")) return "application/wasm";
         if (lower.endsWith(".mp3")) return "audio/mpeg";
         if (lower.endsWith(".wav")) return "audio/wav";
+        if (lower.endsWith(".ico")) return "image/x-icon";
         return "application/octet-stream";
     }
 
