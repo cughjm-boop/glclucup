@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-# APK Builder Script - Builds an APK from web assets without Gradle
-# Uses Android SDK tools directly
+# APK Builder Script - Builds a properly signed APK from web assets
+# Uses Android SDK tools directly (no Gradle required)
 
 ANDROID_SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/opt/android-sdk}}"
 BUILD_TOOLS="$ANDROID_SDK/build-tools/35.0.0"
@@ -12,6 +12,10 @@ BUILD_DIR="$PROJECT_DIR/apk-build"
 OUTPUT_DIR="$PROJECT_DIR"
 APP_NAME="AI Chat"
 PACKAGE="com.aichat.app"
+VERSION_CODE="1"
+VERSION_NAME="1.0.0"
+MIN_SDK="24"
+TARGET_SDK="35"
 
 echo "=== Building APK for $APP_NAME ==="
 
@@ -22,11 +26,17 @@ mkdir -p "$BUILD_DIR/apk"
 mkdir -p "$BUILD_DIR/gen"
 mkdir -p "$BUILD_DIR/res-flat"
 
-# Step 1: Create a minimal AndroidManifest.xml
-cat > "$BUILD_DIR/AndroidManifest.xml" << 'MANIFEST'
+# Step 1: Create AndroidManifest.xml with proper version info
+cat > "$BUILD_DIR/AndroidManifest.xml" << MANIFEST
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.aichat.app">
+    package="$PACKAGE"
+    android:versionCode="$VERSION_CODE"
+    android:versionName="$VERSION_NAME">
+
+    <uses-sdk
+        android:minSdkVersion="$MIN_SDK"
+        android:targetSdkVersion="$TARGET_SDK" />
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -37,7 +47,8 @@ cat > "$BUILD_DIR/AndroidManifest.xml" << 'MANIFEST'
         android:label="AI Chat"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="true"
+        android:extractNativeLibs="true">
 
         <activity
             android:name=".MainActivity"
@@ -55,7 +66,7 @@ MANIFEST
 
 echo "1. Created AndroidManifest.xml"
 
-# Step 2: Create minimal Java source (WebView wrapper)
+# Step 2: Create Java source (WebView wrapper)
 cat > "$BUILD_DIR/MainActivity.java" << 'JAVA'
 package com.aichat.app;
 
@@ -75,7 +86,6 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Full screen setup
         getWindow().setFlags(
             WindowManager.LayoutParams.FLAG_FULLSCREEN,
             WindowManager.LayoutParams.FLAG_FULLSCREEN
@@ -138,35 +148,49 @@ echo "4. Converting to DEX..."
 
 echo "4. Done converting to DEX"
 
-# Step 5: Create a simple launcher icon (1x1 pixel PNG as placeholder)
+# Step 5: Create a proper launcher icon (48x48 PNG)
 echo "5. Creating launcher icon..."
 mkdir -p "$BUILD_DIR/res/mipmap-hdpi"
-# Generate a minimal valid PNG file (1x1 blue pixel)
+mkdir -p "$BUILD_DIR/res/mipmap-mdpi"
+mkdir -p "$BUILD_DIR/res/mipmap-xhdpi"
+mkdir -p "$BUILD_DIR/res/mipmap-xxhdpi"
+mkdir -p "$BUILD_DIR/res/mipmap-xxxhdpi"
 python3 -c "
-import struct, zlib, base64
+import struct, zlib
 
-# Minimal PNG: 1x1 blue pixel
-def create_png():
-    sig = b'\\x89PNG\\r\\n\\x1a\\n'
-    # IHDR
-    ihdr_data = struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0)
+def create_png(size):
+    # Create a simple blue circle icon on transparent background
+    raw_data = b''
+    cx, cy = size // 2, size // 2
+    r = int(size * 0.4)
+    for y in range(size):
+        raw_data += b'\x00'  # filter byte
+        for x in range(size):
+            dx, dy = x - cx, y - cy
+            if dx*dx + dy*dy <= r*r:
+                raw_data += b'\x4a\x90\xd9\xff'  # blue RGBA
+            else:
+                raw_data += b'\x00\x00\x00\x00'  # transparent
+
+    sig = b'\x89PNG\r\n\x1a\n'
+    ihdr_data = struct.pack('>IIBBBBB', size, size, 8, 6, 0, 0, 0)
     ihdr_crc = zlib.crc32(b'IHDR' + ihdr_data) & 0xffffffff
     ihdr = struct.pack('>I', 13) + b'IHDR' + ihdr_data + struct.pack('>I', ihdr_crc)
-    # IDAT
-    raw = zlib.compress(b'\\x00\\x00\\x00\\xff' + b'\\x00\\x00\\xff\\xff')
-    idat_crc = zlib.crc32(b'IDAT' + raw) & 0xffffffff
-    idat = struct.pack('>I', len(raw)) + b'IDAT' + raw + struct.pack('>I', idat_crc)
-    # IEND
+    compressed = zlib.compress(raw_data)
+    idat_crc = zlib.crc32(b'IDAT' + compressed) & 0xffffffff
+    idat = struct.pack('>I', len(compressed)) + b'IDAT' + compressed + struct.pack('>I', idat_crc)
     iend_crc = zlib.crc32(b'IEND') & 0xffffffff
     iend = struct.pack('>I', 0) + b'IEND' + struct.pack('>I', iend_crc)
     return sig + ihdr + idat + iend
 
-with open('$BUILD_DIR/res/mipmap-hdpi/ic_launcher.png', 'wb') as f:
-    f.write(create_png())
-print('Icon created')
+sizes = {'mipmap-mdpi': 48, 'mipmap-hdpi': 72, 'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192}
+for folder, size in sizes.items():
+    with open(f'$BUILD_DIR/res/{folder}/ic_launcher.png', 'wb') as f:
+        f.write(create_png(size))
+print('Icons created')
 " 2>&1
 
-echo "5. Done creating icon"
+echo "5. Done creating icons"
 
 # Step 6: Compile resources with aapt2
 echo "6. Compiling resources..."
@@ -176,7 +200,7 @@ echo "6. Compiling resources..."
 
 echo "6. Done compiling resources"
 
-# Step 7: Link resources with aapt2
+# Step 7: Link resources with aapt2 (with version and SDK flags)
 echo "7. Linking APK..."
 FLAT_ARGS=""
 for f in "$BUILD_DIR/res-flat"/*.flat; do
@@ -192,6 +216,10 @@ done
     --java "$BUILD_DIR/gen" \
     -A "$PROJECT_DIR/dist" \
     --auto-add-overlay \
+    --version-code "$VERSION_CODE" \
+    --version-name "$VERSION_NAME" \
+    --min-sdk-version "$MIN_SDK" \
+    --target-sdk-version "$TARGET_SDK" \
     $FLAT_ARGS 2>&1
 
 echo "7. Done linking APK"
@@ -204,8 +232,14 @@ cd "$BUILD_DIR/apk"
 zip -q -r base.apk classes/
 echo "8. Done adding DEX"
 
-# Step 9: Create debug keystore and sign
-echo "9. Signing APK..."
+# Step 9: Zipalign the APK (required for proper memory mapping)
+echo "9. Zipaligning APK..."
+"$BUILD_TOOLS/zipalign" -v -p 4 "$BUILD_DIR/apk/base.apk" "$BUILD_DIR/apk/aligned.apk" 2>&1
+mv "$BUILD_DIR/apk/aligned.apk" "$BUILD_DIR/apk/base.apk"
+echo "9. Done zipaligning"
+
+# Step 10: Create debug keystore and sign
+echo "10. Signing APK..."
 keytool -genkey -v \
     -keystore "$BUILD_DIR/debug.keystore" \
     -alias androiddebugkey \
@@ -224,12 +258,17 @@ keytool -genkey -v \
     --key-pass pass:android \
     "$BUILD_DIR/apk/base.apk" 2>&1
 
-echo "9. Done signing"
+echo "10. Done signing"
 
-# Step 10: Copy APK to output
+# Step 11: Verify the APK
+echo "11. Verifying APK..."
+"$BUILD_TOOLS/apksigner" verify --verbose "$BUILD_DIR/apk/base.apk" 2>&1
+
+# Step 12: Copy APK to output
 cp "$BUILD_DIR/apk/base.apk" "$OUTPUT_DIR/ai-chat.apk"
 
 echo ""
 echo "=== APK Built Successfully! ==="
 echo "Output: $OUTPUT_DIR/ai-chat.apk"
 ls -lh "$OUTPUT_DIR/ai-chat.apk"
+"$BUILD_TOOLS/aapt" dump badging "$OUTPUT_DIR/ai-chat.apk" 2>&1 | head -5
