@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { synthesizeSpeech, synthesizeCloud, playAudioBlob, stopAll } from '../services/tts'
+import { synthesizeSpeech, synthesizeCloud, playAudioBlob, stopAll, TtsError, TTS_ERROR, isAndroidTtsAvailable, androidTtsSpeak } from '../services/tts'
 import useStore from '../store/useStore'
 
 export default function MessageBubble({ message, character }) {
@@ -21,31 +21,44 @@ export default function MessageBubble({ message, character }) {
       return
     }
 
-    try {
-      setIsPlaying(true)
-      setFallbackMsg(null)
+    setIsPlaying(true)
+    setFallbackMsg(null)
 
+    try {
       if (settings.ttsProvider !== 'web-speech') {
         const result = await synthesizeCloud(message.content, voiceSettings, settings)
         if (result.blob) {
           await playAudioBlob(result.blob)
         }
         if (result.fallbackReason) {
-          setFallbackMsg(result.fallbackReason)
+          const typeLabel = result.errorType === TTS_ERROR.AUTH ? '密钥错误'
+            : result.errorType === TTS_ERROR.NETWORK ? '网络失败'
+            : result.errorType === TTS_ERROR.API ? '接口报错'
+            : ''
+          setFallbackMsg(typeLabel ? `[${typeLabel}] ${result.fallbackReason}` : result.fallbackReason)
         }
       } else {
-        await synthesizeSpeech(message.content, voiceSettings)
+        // web-speech: 优先 Android 原生 TTS
+        if (isAndroidTtsAvailable()) {
+          try {
+            await androidTtsSpeak(message.content, voiceSettings)
+          } catch {
+            await synthesizeSpeech(message.content, voiceSettings)
+          }
+        } else {
+          await synthesizeSpeech(message.content, voiceSettings)
+        }
       }
     } catch (err) {
       console.error('TTS error:', err)
-      setFallbackMsg(`播放失败: ${err.message}`)
-      // Last resort fallback to browser speech
-      try {
-        await synthesizeSpeech(message.content, voiceSettings)
-        setFallbackMsg('当前使用系统语音')
-      } catch {
-        // Both failed
-      }
+      const typeLabel = err instanceof TtsError
+        ? err.type === TTS_ERROR.AUTH ? '密钥错误'
+        : err.type === TTS_ERROR.NETWORK ? '网络失败'
+        : err.type === TTS_ERROR.API ? '接口报错'
+        : err.type === TTS_ERROR.UNSUPPORTED ? '不支持'
+        : ''
+        : ''
+      setFallbackMsg(typeLabel ? `[${typeLabel}] ${err.message}` : `播放失败: ${err.message}`)
     } finally {
       setIsPlaying(false)
     }

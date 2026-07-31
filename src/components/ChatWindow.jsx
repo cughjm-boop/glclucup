@@ -3,7 +3,7 @@ import MessageBubble from './MessageBubble'
 import ChatInput from './ChatInput'
 import EmptyState from './EmptyState'
 import useStore from '../store/useStore'
-import { synthesizeSpeech, synthesizeCloud, playAudioBlob } from '../services/tts'
+import { synthesizeSpeech, synthesizeCloud, playAudioBlob, TtsError, isAndroidTtsAvailable, androidTtsSpeak } from '../services/tts'
 
 export default function ChatWindow() {
   const {
@@ -51,14 +51,27 @@ export default function ChatWindow() {
     const lastMsg = charMessages[charMessages.length - 1]
     if (lastMsg.role === 'assistant') {
       const currentSettings = settingsRef.current
-      if (currentSettings.ttsProvider !== 'web-speech') {
+      const provider = currentSettings.ttsProvider || 'web-speech'
+
+      if (provider !== 'web-speech') {
+        // 云端 TTS → Android 原生 → Web Speech 降级链
         synthesizeCloud(lastMsg.content, effectiveSettings, currentSettings)
           .then((result) => {
             if (result.blob) return playAudioBlob(result.blob)
+            // result.method === 'android-native' or 'web-speech' - already played
           })
-          .catch(() => {})
+          .catch((err) => {
+            console.warn('[ChatWindow] 语音播放失败:', err.message)
+          })
       } else {
-        synthesizeSpeech(lastMsg.content, effectiveSettings).catch(() => {})
+        // web-speech 模式: 优先 Android 原生 TTS
+        if (isAndroidTtsAvailable()) {
+          androidTtsSpeak(lastMsg.content, effectiveSettings).catch(() => {
+            synthesizeSpeech(lastMsg.content, effectiveSettings).catch(() => {})
+          })
+        } else {
+          synthesizeSpeech(lastMsg.content, effectiveSettings).catch(() => {})
+        }
       }
     }
   }, [charMessages.length, getEffectiveVoiceSettings])

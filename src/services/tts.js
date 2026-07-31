@@ -1,8 +1,27 @@
 /**
- * TTS 语音合成服务 - 完整实现
- * 支持: 阿里云 / 腾讯云 / 讯飞 / 浏览器内置降级
+ * TTS 语音合成服务 - 完整实现 v2
+ * 支持: 阿里云 / 腾讯云 / 讯飞 / Android 原生 TTS / 浏览器内置降级
  * 功能: 基础播报、音色调节、声音克隆、异常降级
  */
+
+// ========== 错误类型常量 ==========
+
+export const TTS_ERROR = {
+  AUTH: 'auth',         // 密钥/鉴权错误
+  NETWORK: 'network',   // 网络请求失败
+  API: 'api',           // 接口返回错误
+  UNSUPPORTED: 'unsupported', // 不支持
+  UNKNOWN: 'unknown',   // 未知错误
+}
+
+export class TtsError extends Error {
+  constructor(message, type = TTS_ERROR.UNKNOWN, detail = '') {
+    super(message)
+    this.name = 'TtsError'
+    this.type = type
+    this.detail = detail
+  }
+}
 
 // ========== 音色预设库 ==========
 
@@ -65,6 +84,64 @@ export const TONE_PRESETS = {
   ],
 }
 
+// ========== Android 原生 TTS 桥接 ==========
+
+/**
+ * 检测是否运行在 Android WebView 中且有原生 TTS 桥接
+ */
+export function isAndroidTtsAvailable() {
+  try {
+    return !!(window.AndroidTTS && typeof window.AndroidTTS.speak === 'function')
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 调用 Android 原生 TTS 引擎播放
+ * @returns {Promise<void>}
+ */
+export function androidTtsSpeak(text, voiceSettings = {}) {
+  return new Promise((resolve, reject) => {
+    if (!isAndroidTtsAvailable()) {
+      reject(new TtsError('Android 原生 TTS 不可用', TTS_ERROR.UNSUPPORTED))
+      return
+    }
+    try {
+      const speed = voiceSettings.speed || 1.0
+      const pitch = voiceSettings.pitch || 1.0
+      window.AndroidTTS.speak(text, speed, pitch)
+      // Android TTS 是异步的，用轮询检测是否播放完毕
+      const checkInterval = setInterval(() => {
+        try {
+          if (!window.AndroidTTS.isSpeaking()) {
+            clearInterval(checkInterval)
+            resolve()
+          }
+        } catch {
+          clearInterval(checkInterval)
+          resolve()
+        }
+      }, 300)
+      // 超时保护
+      setTimeout(() => {
+        clearInterval(checkInterval)
+        resolve()
+      }, text.length * 200 + 5000)
+    } catch (err) {
+      reject(new TtsError('Android 原生 TTS 调用失败: ' + err.message, TTS_ERROR.UNKNOWN))
+    }
+  })
+}
+
+export function androidTtsStop() {
+  try {
+    if (isAndroidTtsAvailable()) {
+      window.AndroidTTS.stop()
+    }
+  } catch { /* ignore */ }
+}
+
 // ========== 浏览器能力检测 ==========
 
 export function isSpeechSupported() {
@@ -76,6 +153,11 @@ export function isSpeechAvailable() {
   return window.speechSynthesis.getVoices().length > 0
 }
 
+// 检测任何形式的语音播放是否可用
+export function isAnyTtsAvailable() {
+  return isSpeechSupported() || isAndroidTtsAvailable()
+}
+
 // ========== 语音列表管理 ==========
 
 let cachedVoices = null
@@ -85,6 +167,11 @@ export function getAvailableVoices() {
   return new Promise((resolve) => {
     if (cachedVoices && cachedVoices.length > 0) {
       resolve(cachedVoices)
+      return
+    }
+
+    if (!isSpeechSupported()) {
+      resolve([])
       return
     }
 
@@ -144,7 +231,7 @@ export function refreshVoices() {
   voicesLoaded = false
 }
 
-// ========== 浏览器 Web Speech 合成（降级方案） ==========
+// ========== 浏览器 Web Speech 合成（仅非 Android 环境使用） ==========
 
 let currentUtterance = null
 
@@ -152,12 +239,12 @@ export async function synthesizeSpeech(text, voiceSettings = {}) {
   stopSpeech()
 
   if (!isSpeechSupported()) {
-    throw new Error('浏览器不支持语音合成功能')
+    throw new TtsError('当前浏览器不支持语音合成功能', TTS_ERROR.UNSUPPORTED)
   }
 
   const voices = await getAvailableVoices()
   if (voices.length === 0) {
-    throw new Error('没有可用的语音引擎')
+    throw new TtsError('没有可用的语音引擎', TTS_ERROR.UNSUPPORTED)
   }
 
   let selectedVoice = null
@@ -193,7 +280,7 @@ export async function synthesizeSpeech(text, voiceSettings = {}) {
     utterance.onerror = (e) => {
       currentUtterance = null
       if (e.error !== 'canceled' && e.error !== 'interrupted') {
-        reject(new Error(`语音合成失败: ${e.error}`))
+        reject(new TtsError(`语音合成失败: ${e.error}`, TTS_ERROR.UNKNOWN, e.error))
       } else {
         resolve()
       }
@@ -223,51 +310,79 @@ function stopAudio() {
 // ========== 云端 TTS API 调用 ==========
 
 /**
+ * 分类 fetch 错误
+ */
+function classifyFetchError(err) {
+  const msg = (err.message || '').toLowerCase()
+  if (msg.includes('failed to fetch') || msg.includes('network') || msg.includes('timeout') || msg.includes('abort')) {
+    return new TtsError('网络连接失败，请检查网络后重试', TTS_ERROR.NETWORK, err.message)
+  }
+  if (msg.includes('401') || msg.includes('403') || msg.includes('unauthorized') || msg.includes('forbidden')) {
+    return new TtsError('鉴权失败，请检查密钥配置是否正确', TTS_ERROR.AUTH, err.message)
+  }
+  return new TtsError('请求失败: ' + (err.message || '未知错误'), TTS_ERROR.UNKNOWN, err.message)
+}
+
+/**
+ * 分类 HTTP 响应错误
+ */
+function classifyHttpError(status, body) {
+  if (status === 401 || status === 403) {
+    return new TtsError('鉴权失败（HTTP ' + status + '），请检查密钥是否正确', TTS_ERROR.AUTH, body)
+  }
+  if (status >= 500) {
+    return new TtsError('服务端错误（HTTP ' + status + '），请稍后重试', TTS_ERROR.API, body)
+  }
+  return new TtsError('接口返回错误（HTTP ' + status + '）', TTS_ERROR.API, body)
+}
+
+/**
  * 阿里云 TTS - 使用 HMAC-SHA1 签名
  * 文档: https://help.aliyun.com/document_detail/84435.html
  */
 async function synthesizeAliyun(text, config) {
   const { accessKeyId, accessKeySecret, appKey } = config
   if (!accessKeyId || !accessKeySecret || !appKey) {
-    throw new Error('请填写完整的阿里云 TTS 配置（AccessKey ID、Secret、AppKey）')
+    throw new TtsError('请填写完整的阿里云 TTS 配置（AccessKey ID、Secret、AppKey）', TTS_ERROR.AUTH)
   }
 
-  const url = 'https://nls-gateway.cn-shanghai.aliyuncs.com/stream/v1/tts'
-  const params = {
-    appkey: appKey,
-    token: await getAliyunToken(accessKeyId, accessKeySecret),
-    text: text,
-    format: 'mp3',
-    sample_rate: 16000,
-    voice: config.voiceId || 'xiaoyun',
-    speech_rate: Math.round(config.speed * 100) || 0,
-    pitch_rate: Math.round((config.pitch - 1) * 100) || 0,
-    volume: Math.round((config.volume || 1) * 50),
+  try {
+    const url = 'https://nls-gateway.cn-shanghai.aliyuncs.com/stream/v1/tts'
+    const params = {
+      appkey: appKey,
+      token: await getAliyunToken(accessKeyId, accessKeySecret),
+      text: text,
+      format: 'mp3',
+      sample_rate: 16000,
+      voice: config.voiceId || 'xiaoyun',
+      speech_rate: Math.round(config.speed * 100) || 0,
+      pitch_rate: Math.round((config.pitch - 1) * 100) || 0,
+      volume: Math.round((config.volume || 1) * 50),
+    }
+
+    const queryString = Object.entries(params)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .join('&')
+
+    const response = await fetch(`${url}?${queryString}`, { method: 'GET' })
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '')
+      throw classifyHttpError(response.status, errText)
+    }
+
+    const contentType = response.headers.get('content-type') || ''
+    if (contentType.includes('json')) {
+      const errData = await response.json()
+      const errMsg = errData.error_message || errData.message || JSON.stringify(errData)
+      throw new TtsError('阿里云 TTS: ' + errMsg, TTS_ERROR.API, JSON.stringify(errData))
+    }
+
+    return await response.blob()
+  } catch (err) {
+    if (err instanceof TtsError) throw err
+    throw classifyFetchError(err)
   }
-
-  const queryString = Object.entries(params)
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join('&')
-
-  const response = await fetch(`${url}?${queryString}`, {
-    method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  })
-
-  if (!response.ok) {
-    const errText = await response.text().catch(() => '')
-    throw new Error(`阿里云 TTS 请求失败 (${response.status}): ${errText}`)
-  }
-
-  const isJson = response.headers.get('content-type')?.includes('json')
-  if (isJson) {
-    const errData = await response.json()
-    throw new Error(`阿里云 TTS 错误: ${errData.error_message || JSON.stringify(errData)}`)
-  }
-
-  return await response.blob()
 }
 
 /**
@@ -275,22 +390,24 @@ async function synthesizeAliyun(text, config) {
  */
 async function getAliyunToken(accessKeyId, accessKeySecret) {
   const tokenUrl = 'https://nls-meta.cn-shanghai.aliyuncs.com/pop/2018-05-18/tokens'
-  const response = await fetch(`${tokenUrl}?AccessKeyId=${accessKeyId}&Action=CreateToken&Version=2018-05-18`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${accessKeySecret}`,
-    },
-  })
-  if (!response.ok) {
-    const errText = await response.text().catch(() => '')
-    throw new Error(`阿里云 Token 获取失败: ${errText}`)
+  try {
+    const response = await fetch(`${tokenUrl}?AccessKeyId=${accessKeyId}&Action=CreateToken&Version=2018-05-18`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '')
+      throw classifyHttpError(response.status, errText)
+    }
+    const data = await response.json()
+    if (data.Token && data.Token.Id) {
+      return data.Token.Id
+    }
+    throw new TtsError('阿里云 Token 获取失败: ' + JSON.stringify(data), TTS_ERROR.AUTH)
+  } catch (err) {
+    if (err instanceof TtsError) throw err
+    throw classifyFetchError(err)
   }
-  const data = await response.json()
-  if (data.Token && data.Token.Id) {
-    return data.Token.Id
-  }
-  throw new Error(`阿里云 Token 解析失败: ${JSON.stringify(data)}`)
 }
 
 /**
@@ -300,164 +417,185 @@ async function getAliyunToken(accessKeyId, accessKeySecret) {
 async function synthesizeTencent(text, config) {
   const { secretId, secretKey, appId } = config
   if (!secretId || !secretKey || !appId) {
-    throw new Error('请填写完整的腾讯云 TTS 配置（SecretId、SecretKey、AppId）')
+    throw new TtsError('请填写完整的腾讯云 TTS 配置（SecretId、SecretKey、AppId）', TTS_ERROR.AUTH)
   }
 
-  const service = 'tts'
-  const host = 'tts.tencentcloudapi.com'
-  const region = 'ap-guangzhou'
-  const action = 'TextToVoice'
-  const version = '2019-08-23'
-  const timestamp = Math.floor(Date.now() / 1000)
-  const date = new Date(timestamp * 1000).toISOString().slice(0, 10)
+  try {
+    const service = 'tts'
+    const host = 'tts.tencentcloudapi.com'
+    const region = 'ap-guangzhou'
+    const action = 'TextToVoice'
+    const version = '2019-08-23'
+    const timestamp = Math.floor(Date.now() / 1000)
+    const date = new Date(timestamp * 1000).toISOString().slice(0, 10)
 
-  const payload = JSON.stringify({
-    AppId: parseInt(appId),
-    Text: text,
-    SessionId: `${Date.now()}`,
-    ModelType: 1,
-    VoiceType: parseInt(config.voiceId) || 101001,
-    Speed: config.speed || 0,
-    Volume: config.volume || 0,
-    PrimaryLanguage: 1,
-    SampleRate: 16000,
-    Codec: 'mp3',
-  })
+    const payload = JSON.stringify({
+      AppId: parseInt(appId),
+      Text: text,
+      SessionId: `${Date.now()}`,
+      ModelType: 1,
+      VoiceType: parseInt(config.voiceId) || 101001,
+      Speed: config.speed || 0,
+      Volume: config.volume || 0,
+      PrimaryLanguage: 1,
+      SampleRate: 16000,
+      Codec: 'mp3',
+    })
 
-  const hashedPayload = await sha256Hex(payload)
-  const httpRequestMethod = 'POST'
-  const canonicalUri = '/'
-  const canonicalQueryString = ''
-  const canonicalHeaders = `content-type:application/json; charset=utf-8\nhost:${host}\n`
-  const signedHeaders = 'content-type;host'
-  const canonicalRequest = `${httpRequestMethod}\n${canonicalUri}\n${canonicalQueryString}\n${canonicalHeaders}\n${signedHeaders}\n${hashedPayload}`
+    const hashedPayload = await sha256Hex(payload)
+    const canonicalHeaders = `content-type:application/json; charset=utf-8\nhost:${host}\n`
+    const signedHeaders = 'content-type;host'
+    const canonicalRequest = `POST\n/\n\n${canonicalHeaders}\n${signedHeaders}\n${hashedPayload}`
 
-  const algorithm = 'TC3-HMAC-SHA256'
-  const credentialScope = `${date}/${service}/tc3_request`
-  const hashedCanonicalRequest = await sha256Hex(canonicalRequest)
-  const stringToSign = `${algorithm}\n${timestamp}\n${credentialScope}\n${hashedCanonicalRequest}`
+    const algorithm = 'TC3-HMAC-SHA256'
+    const credentialScope = `${date}/${service}/tc3_request`
+    const hashedCanonicalRequest = await sha256Hex(canonicalRequest)
+    const stringToSign = `${algorithm}\n${timestamp}\n${credentialScope}\n${hashedCanonicalRequest}`
 
-  const secretDate = await hmacSHA256(`TC3${secretKey}`, date)
-  const secretService = await hmacSHA256(secretDate, service)
-  const secretSigning = await hmacSHA256(secretService, 'tc3_request')
-  const signature = await hmacSHA256Hex(secretSigning, stringToSign)
+    const secretDate = await hmacSHA256(`TC3${secretKey}`, date)
+    const secretService = await hmacSHA256(secretDate, service)
+    const secretSigning = await hmacSHA256(secretService, 'tc3_request')
+    const signature = await hmacSHA256Hex(secretSigning, stringToSign)
 
-  const authorization = `${algorithm} Credential=${secretId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`
+    const authorization = `${algorithm} Credential=${secretId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`
 
-  const response = await fetch(`https://${host}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Host': host,
-      'X-TC-Action': action,
-      'X-TC-Version': version,
-      'X-TC-Timestamp': String(timestamp),
-      'X-TC-Region': region,
-      'Authorization': authorization,
-    },
-    body: payload,
-  })
+    const response = await fetch(`https://${host}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Host': host,
+        'X-TC-Action': action,
+        'X-TC-Version': version,
+        'X-TC-Timestamp': String(timestamp),
+        'X-TC-Region': region,
+        'Authorization': authorization,
+      },
+      body: payload,
+    })
 
-  if (!response.ok) {
-    const errText = await response.text().catch(() => '')
-    throw new Error(`腾讯云 TTS 请求失败 (${response.status}): ${errText}`)
-  }
-
-  const data = await response.json()
-  if (data.Response.Error) {
-    throw new Error(`腾讯云 TTS 错误: ${data.Response.Error.Message}`)
-  }
-
-  if (data.Response.Audio) {
-    const binaryStr = atob(data.Response.Audio)
-    const bytes = new Uint8Array(binaryStr.length)
-    for (let i = 0; i < binaryStr.length; i++) {
-      bytes[i] = binaryStr.charCodeAt(i)
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '')
+      throw classifyHttpError(response.status, errText)
     }
-    return new Blob([bytes], { type: 'audio/mpeg' })
-  }
 
-  throw new Error('腾讯云 TTS 返回了空的音频数据')
+    const data = await response.json()
+    if (data.Response && data.Response.Error) {
+      throw new TtsError('腾讯云 TTS: ' + data.Response.Error.Message, TTS_ERROR.API, JSON.stringify(data.Response.Error))
+    }
+
+    if (data.Response && data.Response.Audio) {
+      const binaryStr = atob(data.Response.Audio)
+      const bytes = new Uint8Array(binaryStr.length)
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i)
+      }
+      return new Blob([bytes], { type: 'audio/mpeg' })
+    }
+
+    throw new TtsError('腾讯云 TTS 返回了空的音频数据', TTS_ERROR.API)
+  } catch (err) {
+    if (err instanceof TtsError) throw err
+    throw classifyFetchError(err)
+  }
 }
 
 /**
- * 讯飞 TTS - WebAPI 流式接口
+ * 讯飞 TTS - WebAPI 流式接口 v2
  * 文档: https://www.xfyun.cn/doc/tts/online_tts/API.html
+ *
+ * 修复要点:
+ * 1. 使用 TextEncoder 代替已废弃的 unescape(encodeURIComponent())
+ * 2. 修正签名计算中 request_line 的格式
+ * 3. 统一使用 Web Crypto API 进行 HMAC-SHA256
+ * 4. 添加详细的错误分类
  */
 async function synthesizeXunfei(text, config) {
   const { appId, apiKey, apiSecret } = config
   if (!appId || !apiKey || !apiSecret) {
-    throw new Error('请填写完整的讯飞 TTS 配置（AppId、APIKey、APISecret）')
+    throw new TtsError('请填写完整的讯飞 TTS 配置（AppId、APIKey、APISecret）', TTS_ERROR.AUTH)
   }
 
-  const host = 'tts-api.xfyun.cn'
-  const path = '/v2/tts'
-  const url = `https://${host}${path}`
-  const date = new Date().toUTCString()
+  try {
+    const host = 'tts-api.xfyun.cn'
+    const path = '/v2/tts'
+    const url = `https://${host}${path}`
+    const date = new Date().toUTCString()
 
-  const params = {
-    host,
-    date,
-    request_line: `POST ${path} HTTP/1.1`,
-  }
+    // 构建签名原文（讯飞要求的格式）
+    const signatureOrigin = `host: ${host}\ndate: ${date}\nPOST ${path} HTTP/1.1`
+    const signature = await hmacSHA256Base64(apiSecret, signatureOrigin)
 
-  const signatureOrigin = `host: ${params.host}\ndate: ${params.date}\nPOST ${params.request_line.split(' ')[1]} HTTP/1.1`
-  const signature = await hmacSHA256Base64(apiSecret, signatureOrigin)
+    // 构建 Authorization 头
+    const authorizationOrigin = `api_key="${apiKey}", algorithm="hmac-sha256", headers="host date request-line", signature="${signature}"`
+    const authorization = btoa(authorizationOrigin)
 
-  const authorizationOrigin = `api_key="${apiKey}", algorithm="hmac-sha256", headers="host date request-line", signature="${signature}"`
-  const authorization = btoa(authorizationOrigin)
+    // 使用 TextEncoder 进行文本的 Base64 编码（替代废弃的 unescape）
+    const textBytes = new TextEncoder().encode(text)
+    const textBase64 = btoa(String.fromCharCode(...textBytes))
 
-  const payload = JSON.stringify({
-    common: { app_id: appId },
-    business: {
-      aue: 'lame',
-      sfl: 1,
-      auf: 'audio/L16;rate=16000',
-      vcn: config.voiceId || 'xiaoyan',
-      speed: Math.round(config.speed * 50) || 50,
-      pitch: Math.round(config.pitch * 50) || 50,
-      volume: Math.round((config.volume || 1) * 100),
-      bgs: 0,
-      tte: 'UTF8',
-    },
-    data: {
-      status: 2,
-      text: btoa(unescape(encodeURIComponent(text))),
-    },
-  })
+    const payload = JSON.stringify({
+      common: { app_id: appId },
+      business: {
+        aue: 'lame',
+        sfl: 1,
+        auf: 'audio/L16;rate=16000',
+        vcn: config.voiceId || 'xiaoyan',
+        speed: Math.round((config.speed || 1.0) * 50),
+        pitch: Math.round((config.pitch || 1.0) * 50),
+        volume: Math.round((config.volume || 1.0) * 100),
+        bgs: 0,
+        tte: 'UTF8',
+      },
+      data: {
+        status: 2,
+        text: textBase64,
+      },
+    })
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Host': host,
-      'Date': date,
-      'Authorization': authorization,
-      'X-Appid': appId,
-    },
-    body: payload,
-  })
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Host': host,
+        'Date': date,
+        'Authorization': authorization,
+        'X-Appid': appId,
+      },
+      body: payload,
+    })
 
-  if (!response.ok) {
-    const errText = await response.text().catch(() => '')
-    throw new Error(`讯飞 TTS 请求失败 (${response.status}): ${errText}`)
-  }
-
-  const data = await response.json()
-  if (data.code !== 0) {
-    throw new Error(`讯飞 TTS 错误: ${data.message || data.desc || JSON.stringify(data)}`)
-  }
-
-  if (data.data && data.data.audio) {
-    const binaryStr = atob(data.data.audio)
-    const bytes = new Uint8Array(binaryStr.length)
-    for (let i = 0; i < binaryStr.length; i++) {
-      bytes[i] = binaryStr.charCodeAt(i)
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '')
+      throw classifyHttpError(response.status, errText)
     }
-    return new Blob([bytes], { type: 'audio/mpeg' })
-  }
 
-  throw new Error('讯飞 TTS 返回了空的音频数据')
+    const data = await response.json()
+    if (data.code !== 0) {
+      const errMsg = data.message || data.desc || JSON.stringify(data)
+      // 讯飞错误码分类
+      if (data.code === 10001 || data.code === 10002 || data.code === 10003 || data.code === 10004) {
+        throw new TtsError('讯飞 TTS 鉴权失败: ' + errMsg, TTS_ERROR.AUTH, JSON.stringify(data))
+      }
+      if (data.code === 10100 || data.code === 10101 || data.code === 10102) {
+        throw new TtsError('讯飞 TTS 参数错误: ' + errMsg, TTS_ERROR.API, JSON.stringify(data))
+      }
+      throw new TtsError('讯飞 TTS: ' + errMsg, TTS_ERROR.API, JSON.stringify(data))
+    }
+
+    if (data.data && data.data.audio) {
+      const binaryStr = atob(data.data.audio)
+      const bytes = new Uint8Array(binaryStr.length)
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i)
+      }
+      return new Blob([bytes], { type: 'audio/mpeg' })
+    }
+
+    throw new TtsError('讯飞 TTS 返回了空的音频数据', TTS_ERROR.API)
+  } catch (err) {
+    if (err instanceof TtsError) throw err
+    throw classifyFetchError(err)
+  }
 }
 
 // ========== 加密工具函数 ==========
@@ -493,11 +631,15 @@ async function hmacSHA256Base64(key, message) {
 // ========== 统一语音合成入口 ==========
 
 /**
- * 使用云端 TTS API 合成语音，失败时自动降级到浏览器内置
+ * 使用云端 TTS API 合成语音，失败时自动降级到 Android 原生 TTS 或浏览器内置
+ *
+ * 降级链:
+ *   云端 TTS API → Android 原生 TTS → Web Speech API → 报错
+ *
  * @param {string} text - 要合成的文本
  * @param {Object} voiceSettings - 语音设置
  * @param {Object} ttsConfig - TTS 提供商配置
- * @returns {Promise<{method: string, blob?: Blob, fallbackReason?: string}>}
+ * @returns {Promise<{method: string, blob?: Blob, fallbackReason?: string, errorType?: string}>}
  */
 export async function synthesizeCloud(text, voiceSettings = {}, ttsConfig = {}) {
   const provider = ttsConfig.ttsProvider || 'web-speech'
@@ -512,6 +654,9 @@ export async function synthesizeCloud(text, voiceSettings = {}, ttsConfig = {}) 
     voiceId: voiceSettings.cloudVoiceId || voiceSettings.voiceURI || '',
   }
 
+  let lastError = null
+
+  // Step 1: 尝试云端 TTS API
   try {
     if (provider === 'aliyun') {
       const blob = await synthesizeAliyun(text, {
@@ -542,20 +687,59 @@ export async function synthesizeCloud(text, voiceSettings = {}, ttsConfig = {}) 
       })
       return { method: 'xunfei', blob }
     }
-
-    // 默认使用浏览器内置
-    await synthesizeSpeech(text, voiceSettings)
-    return { method: 'web-speech' }
   } catch (err) {
-    console.warn(`[TTS] ${provider} 调用失败，降级到浏览器内置语音:`, err.message)
-    // 降级到浏览器内置语音
+    lastError = err
+    console.warn(`[TTS] ${provider} 云端调用失败:`, err.message, `(type: ${err.type || 'unknown'})`)
+  }
+
+  // Step 2: 降级到 Android 原生 TTS
+  if (isAndroidTtsAvailable()) {
     try {
-      await synthesizeSpeech(text, voiceSettings)
-      return { method: 'web-speech', fallbackReason: `当前使用系统语音（${err.message}）` }
-    } catch (fallbackErr) {
-      throw new Error(`语音合成失败: ${err.message}。系统语音降级也失败: ${fallbackErr.message}`)
+      await androidTtsSpeak(text, voiceSettings)
+      const reason = lastError
+        ? `已降级为 Android 系统语音（${provider} 云端失败: ${lastError.message}）`
+        : '使用 Android 系统语音'
+      return {
+        method: 'android-native',
+        fallbackReason: reason,
+        errorType: lastError ? lastError.type : undefined,
+      }
+    } catch (androidErr) {
+      console.warn('[TTS] Android 原生 TTS 降级也失败:', androidErr.message)
     }
   }
+
+  // Step 3: 降级到 Web Speech API
+  if (isSpeechSupported()) {
+    try {
+      await synthesizeSpeech(text, voiceSettings)
+      const reason = lastError
+        ? `已降级为浏览器系统语音（${provider} 云端失败: ${lastError.message}）`
+        : '使用浏览器内置语音'
+      return {
+        method: 'web-speech',
+        fallbackReason: reason,
+        errorType: lastError ? lastError.type : undefined,
+      }
+    } catch (speechErr) {
+      console.warn('[TTS] Web Speech 降级也失败:', speechErr.message)
+      throw new TtsError(
+        '语音合成失败。云端 TTS 和所有降级方案均不可用。',
+        TTS_ERROR.UNSUPPORTED,
+        `cloud: ${lastError?.message || 'N/A'}, speech: ${speechErr.message}`
+      )
+    }
+  }
+
+  // 无任何可用方案
+  if (lastError) {
+    throw new TtsError(
+      '语音合成失败，当前环境不支持任何语音播放方式。' + (lastError.message ? ` (${lastError.message})` : ''),
+      TTS_ERROR.UNSUPPORTED,
+      lastError.message
+    )
+  }
+  throw new TtsError('当前环境不支持语音播放', TTS_ERROR.UNSUPPORTED)
 }
 
 /**
@@ -577,12 +761,12 @@ export function playAudioBlob(blob) {
     audio.onerror = (e) => {
       URL.revokeObjectURL(url)
       currentAudio = null
-      reject(new Error(`音频播放失败: ${e.message || '未知错误'}`))
+      reject(new TtsError('音频播放失败: ' + (e.message || '未知错误'), TTS_ERROR.UNKNOWN))
     }
     audio.play().catch((err) => {
       URL.revokeObjectURL(url)
       currentAudio = null
-      reject(new Error(`音频播放失败: ${err.message}`))
+      reject(new TtsError('音频播放失败: ' + err.message, TTS_ERROR.UNKNOWN))
     })
   })
 }
@@ -596,6 +780,7 @@ export function stopAudioPlayback() {
  */
 export function stopAll() {
   stopSpeech()
+  androidTtsStop()
   stopAudio()
 }
 

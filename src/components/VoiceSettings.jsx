@@ -13,6 +13,10 @@ import {
   playAudioBlob,
   stopAll,
   TONE_PRESETS,
+  TTS_ERROR,
+  TtsError,
+  isAndroidTtsAvailable,
+  isAnyTtsAvailable,
 } from '../services/tts'
 import {
   extractAudio,
@@ -129,14 +133,44 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
           await playAudioBlob(result.blob)
         }
         if (result.fallbackReason) {
-          setFallbackInfo(result.fallbackReason)
+          const errorType = result.errorType
+          const typeLabel = errorType === TTS_ERROR.AUTH ? '密钥配置错误'
+            : errorType === TTS_ERROR.NETWORK ? '网络连接失败'
+            : errorType === TTS_ERROR.API ? '服务接口报错'
+            : ''
+          setFallbackInfo({
+            message: result.fallbackReason,
+            type: errorType,
+            typeLabel,
+          })
         }
       } else {
-        await previewVoice(voiceSettings)
+        // web-speech: try Android native first, then Web Speech
+        if (isAndroidTtsAvailable()) {
+          try {
+            const { androidTtsSpeak } = await import('../services/tts')
+            await androidTtsSpeak('你好，这是我的声音，你觉得怎么样？', voiceSettings)
+            setFallbackInfo({ message: '使用 Android 系统语音播放', type: 'android', typeLabel: 'Android 原生 TTS' })
+          } catch (androidErr) {
+            try {
+              await previewVoice(voiceSettings)
+            } catch (speechErr) {
+              setFallbackInfo({ message: `试听失败: ${speechErr.message}`, type: 'error', typeLabel: '错误' })
+            }
+          }
+        } else {
+          await previewVoice(voiceSettings)
+        }
       }
     } catch (err) {
       console.error('Preview error:', err)
-      setFallbackInfo(`试听失败: ${err.message}`)
+      const errorType = err instanceof TtsError ? err.type : 'unknown'
+      const typeLabel = errorType === TTS_ERROR.AUTH ? '密钥配置错误'
+        : errorType === TTS_ERROR.NETWORK ? '网络连接失败'
+        : errorType === TTS_ERROR.API ? '服务接口报错'
+        : errorType === TTS_ERROR.UNSUPPORTED ? '环境不支持'
+        : '未知错误'
+      setFallbackInfo({ message: err.message, type: errorType, typeLabel })
     }
     setIsPreviewing(false)
   }
@@ -353,12 +387,35 @@ export default function VoiceSettings({ voiceSettings: externalVoiceSettings, on
 
       {/* Fallback info */}
       {fallbackInfo && (
-        <div className="p-3 bg-amber-50 dark:bg-amber-900/30 rounded-xl">
-          <p className="text-sm text-amber-700 dark:text-amber-300 flex items-center gap-2">
+        <div className={`p-3 rounded-xl ${
+          fallbackInfo.type === TTS_ERROR.AUTH
+            ? 'bg-red-50 dark:bg-red-900/30'
+            : fallbackInfo.type === TTS_ERROR.NETWORK
+            ? 'bg-amber-50 dark:bg-amber-900/30'
+            : fallbackInfo.type === 'android'
+            ? 'bg-blue-50 dark:bg-blue-900/30'
+            : 'bg-amber-50 dark:bg-amber-900/30'
+        }`}>
+          <p className={`text-sm flex items-center gap-2 ${
+            fallbackInfo.type === TTS_ERROR.AUTH
+              ? 'text-red-700 dark:text-red-300'
+              : fallbackInfo.type === 'android'
+              ? 'text-blue-700 dark:text-blue-300'
+              : 'text-amber-700 dark:text-amber-300'
+          }`}>
             <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              {fallbackInfo.type === TTS_ERROR.AUTH || fallbackInfo.type === 'error' ? (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              ) : fallbackInfo.type === 'android' ? (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              ) : (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              )}
             </svg>
-            {fallbackInfo}
+            {fallbackInfo.typeLabel && (
+              <span className="font-medium px-1.5 py-0.5 rounded text-xs bg-white/50 dark:bg-black/30">{fallbackInfo.typeLabel}</span>
+            )}
+            {fallbackInfo.message}
           </p>
         </div>
       )}

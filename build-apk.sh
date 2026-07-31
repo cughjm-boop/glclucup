@@ -95,6 +95,9 @@ import android.view.WindowInsetsController;
 import android.view.WindowInsets;
 import android.view.View;
 import android.graphics.Color;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
+import android.webkit.JavascriptInterface;
 import java.io.InputStream;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -102,9 +105,11 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
     private WebView webView;
+    private TextToSpeech tts;
     private static final String LOCAL_HOST = "https://app.local/";
     private static final int FILE_CHOOSER_REQUEST = 100;
     private static final int PERMISSION_REQUEST = 200;
@@ -137,9 +142,26 @@ public class MainActivity extends Activity {
             }
         } catch (Exception ignored) {}
 
+        // Initialize Android TTS engine
+        tts = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
+            @Override
+            public void onInit(int status) {
+                if (status == TextToSpeech.SUCCESS) {
+                    // Set Chinese language
+                    int result = tts.setLanguage(Locale.CHINESE);
+                    if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                        tts.setLanguage(Locale.US);
+                    }
+                }
+            }
+        });
+
         webView = new WebView(this);
         webView.setWebViewClient(new LocalWebViewClient());
         webView.setWebChromeClient(new ChromeClient());
+
+        // Register Android TTS bridge for JavaScript
+        webView.addJavascriptInterface(new AndroidTTSBridge(), "AndroidTTS");
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -165,6 +187,57 @@ public class MainActivity extends Activity {
             webView.loadDataWithBaseURL(LOCAL_HOST, html, "text/html", "UTF-8", null);
         } catch (Exception e) {
             webView.loadData("<h1>Failed to load app</h1>", "text/html", "UTF-8");
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (tts != null) {
+            tts.stop();
+            tts.shutdown();
+        }
+        super.onDestroy();
+    }
+
+    /**
+     * Android 原生 TTS 桥接类 - 暴露给 JavaScript 调用
+     * 在 JS 中通过 window.AndroidTTS.speak(text, speed, pitch) 调用
+     */
+    public class AndroidTTSBridge {
+        private String currentUtteranceId = null;
+
+        @JavascriptInterface
+        public void speak(String text, float speed, float pitch) {
+            if (tts == null) return;
+
+            // Map speed: 0.5-2.0 → Android rate 0.5-2.0
+            float ttsRate = Math.max(0.1f, Math.min(3.0f, speed));
+            // Map pitch: 0.5-2.0 → Android pitch 0.5-2.0
+            float ttsPitch = Math.max(0.1f, Math.min(3.0f, pitch));
+
+            tts.setSpeechRate(ttsRate);
+            tts.setPitch(ttsPitch);
+
+            currentUtteranceId = "tts_" + System.currentTimeMillis();
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, currentUtteranceId);
+            } else {
+                tts.speak(text, TextToSpeech.QUEUE_FLUSH, null);
+            }
+        }
+
+        @JavascriptInterface
+        public void stop() {
+            if (tts != null) {
+                tts.stop();
+            }
+            currentUtteranceId = null;
+        }
+
+        @JavascriptInterface
+        public boolean isSpeaking() {
+            return tts != null && tts.isSpeaking();
         }
     }
 
