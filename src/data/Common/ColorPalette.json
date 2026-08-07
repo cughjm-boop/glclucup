@@ -1,0 +1,30 @@
+{
+  "description": "常用配色方案",
+  "palettes": {
+    "流萤-默认": {
+      "primary": "#EDE8E5",
+      "secondary": "#D9D8DE",
+      "accent": "#BAC8D9",
+      "highlight": "#F7F8FA",
+      "shadow": "#8D97AE",
+      "description": "银白→珍珠灰→冰蓝灰冷色渐变"
+    },
+    "三月七-默认": {
+      "primary": "#F8F8FA",
+      "secondary": "#F5A9C8",
+      "accent": "#3C5F9A",
+      "highlight": "#88C9F6",
+      "gold": "#D8B45B",
+      "dark": "#2A2A32",
+      "description": "粉白蓝清爽配色"
+    },
+    "开拓者-默认": {
+      "primary": "#深灰",
+      "secondary": "#金色",
+      "accent": "#黄色",
+      "highlight": "#白色",
+      "dark": "#黑色",
+      "description": "银河旅行者机能风配色"
+    }
+  }
+}

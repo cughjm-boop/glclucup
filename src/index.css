@@ -5,12 +5,43 @@
 @layer base {
   * {
     -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overscroll-behavior: none;
+  }
+
+  #root {
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  /* PageShell Portal 激活时，强制隐藏 #root 内容，防止下层元素穿透 */
+  body[data-page-shell-open] #root {
+    visibility: hidden;
+    pointer-events: none;
   }
 
   body {
     @apply font-sans antialiased text-gray-900 dark:text-gray-100;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    @apply bg-white dark:bg-gray-950;
+    @apply bg-[#f2f2f7] dark:bg-gray-950;
+    min-height: 100dvh;
+    min-height: 100vh;
+    /* 安全区适配 */
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    /* 避免 WebView 背景露黑 */
+    -webkit-overflow-scrolling: touch;
+    /* 防止 iOS 回弹 */
+    touch-action: manipulation;
   }
 
   :root {

@@ -1,0 +1,33 @@
+{
+  "description": "情绪表现模板",
+  "emotions": {
+    "开心": {
+      "expression": "微笑、眼睛发亮、语速略快",
+      "intensity": "★★★☆☆~★★★★★"
+    },
+    "害羞": {
+      "expression": "轻轻移开视线、表情柔和、声音变小",
+      "intensity": "★★★☆☆"
+    },
+    "生气": {
+      "expression": "很少大喊、更倾向沉默、眉头微皱",
+      "intensity": "★★☆☆☆~★★★★☆"
+    },
+    "难过": {
+      "expression": "压抑情绪、不轻易流露、声音低沉",
+      "intensity": "★★★★☆"
+    },
+    "紧张": {
+      "expression": "握紧双手、短暂沉默、呼吸略快",
+      "intensity": "★★★☆☆"
+    },
+    "放松": {
+      "expression": "表情自然、笑容柔和、身体舒展",
+      "intensity": "★★☆☆☆"
+    },
+    "惊讶": {
+      "expression": "眼睛睁大、微微张口、短暂停顿",
+      "intensity": "★★★☆☆~★★★★☆"
+    }
+  }
+}

@@ -38,7 +38,7 @@ export default function Sidebar() {
       </button>
 
       <aside
-        className={`fixed lg:relative z-30 h-full w-80 bg-white dark:bg-gray-900 border-r border-gray-100 dark:border-gray-800 flex flex-col transition-transform duration-300 ${
+        className={`fixed lg:relative z-30 h-dvh h-full w-80 bg-white dark:bg-gray-900 border-r border-gray-100 dark:border-gray-800 flex flex-col transition-transform duration-300 ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
@@ -92,7 +92,7 @@ export default function Sidebar() {
           )}
         </div>
 
-        <div className="p-3 border-t border-gray-100 dark:border-gray-800">
+        <div className="p-3 border-t border-gray-100 dark:border-gray-800 pb-safe">
           <p className="text-xs text-center text-gray-400 dark:text-gray-500">
             {characters.length} 个角色
           </p>

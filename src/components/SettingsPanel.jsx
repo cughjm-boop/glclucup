@@ -1,30 +1,19 @@
 import { useState } from 'react'
 import useStore from '../store/useStore'
-import VoiceSettings from './VoiceSettings'
-import { TONE_PRESETS } from '../services/tts'
-
-const TTS_PROVIDERS = [
-  { value: 'web-speech', label: '浏览器内置', icon: '🌐', desc: '使用系统语音引擎，无需配置' },
-  { value: 'aliyun', label: '阿里云', icon: '☁️', desc: '阿里云智能语音服务' },
-  { value: 'tencent', label: '腾讯云', icon: '🔊', desc: '腾讯云语音合成' },
-  { value: 'xunfei', label: '讯飞', icon: '🎙️', desc: '科大讯飞语音合成' },
-]
+import UpdateChecker from './UpdateChecker'
+import CostControlPanel from './CostControlPanel'
 
 export default function SettingsPanel() {
-  const { settings, updateSettings, setView, setTheme } = useStore()
+  const { settings, updateSettings, setView, setTheme, getUserWorldview, saveUserWorldview, resetWorldview } = useStore()
   const [showApiKey, setShowApiKey] = useState(false)
   const [localSettings, setLocalSettings] = useState({ ...settings })
-  const [showCloudKeys, setShowCloudKeys] = useState({})
-
-  const toggleCloudKey = (key) => {
-    setShowCloudKeys((prev) => ({ ...prev, [key]: !prev[key] }))
-  }
+  const [showCostControl, setShowCostControl] = useState(false)
+  const [showWorldviewEditor, setShowWorldviewEditor] = useState(false)
+  const [worldviewText, setWorldviewText] = useState('')
+  const [worldviewError, setWorldviewError] = useState('')
 
   const handleSave = () => {
     updateSettings(localSettings)
-    if (localSettings.theme !== settings.theme) {
-      setTheme(localSettings.theme)
-    }
     setView('chat')
   }
 
@@ -59,7 +48,10 @@ export default function SettingsPanel() {
               ].map((opt) => (
                 <button
                   key={opt.value}
-                  onClick={() => updateLocalSetting('theme', opt.value)}
+                  onClick={() => {
+                    updateLocalSetting('theme', opt.value)
+                    setTheme(opt.value)
+                  }}
                   className={`flex-1 py-3 px-3 rounded-xl text-sm font-medium transition-all flex flex-col items-center gap-1 ${
                     localSettings.theme === opt.value
                       ? 'bg-ios-blue text-white shadow-sm'
@@ -73,7 +65,82 @@ export default function SettingsPanel() {
             </div>
           </div>
 
-          {/* Divider */}
+          <div className="border-t border-gray-100 dark:border-gray-800" />
+
+          {/* 世界观编辑器 */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">星穹铁道世界观</h3>
+              <button
+                onClick={() => {
+                  if (!showWorldviewEditor) {
+                    const wv = getUserWorldview()
+                    setWorldviewText(JSON.stringify(wv, null, 2))
+                    setWorldviewError('')
+                  }
+                  setShowWorldviewEditor(!showWorldviewEditor)
+                }}
+                className="flex items-center gap-1 text-xs text-ios-blue dark:text-ios-blue hover:underline"
+              >
+                {showWorldviewEditor ? '收起' : '编辑'}
+                <svg className={`w-3 h-3 transition-transform ${showWorldviewEditor ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mb-2">
+              星穹铁道角色共享的世界观设定。修改后，所有星穹铁道角色的 AI 对话将使用自定义世界观。留空或重置将恢复内置默认设定。
+            </p>
+
+            {showWorldviewEditor && (
+              <div className="space-y-3">
+                <textarea
+                  value={worldviewText}
+                  onChange={(e) => {
+                    setWorldviewText(e.target.value)
+                    setWorldviewError('')
+                  }}
+                  placeholder="在此编辑世界观 JSON..."
+                  className="ios-textarea font-mono text-xs h-64"
+                  spellCheck={false}
+                />
+                {worldviewError && (
+                  <p className="text-xs text-red-500">{worldviewError}</p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      try {
+                        const parsed = JSON.parse(worldviewText)
+                        saveUserWorldview(parsed)
+                        setWorldviewError('')
+                        alert('世界观已保存！')
+                      } catch (e) {
+                        setWorldviewError('JSON 格式错误：' + e.message)
+                      }
+                    }}
+                    className="flex-1 ios-button text-sm py-2"
+                  >
+                    保存世界观
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (confirm('确定要重置为内置默认世界观吗？')) {
+                        resetWorldview()
+                        const wv = getUserWorldview()
+                        setWorldviewText(JSON.stringify(wv, null, 2))
+                        setWorldviewError('')
+                      }
+                    }}
+                    className="ios-button-secondary text-sm py-2"
+                  >
+                    重置
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="border-t border-gray-100 dark:border-gray-800" />
 
           {/* API Configuration */}
@@ -140,65 +207,19 @@ export default function SettingsPanel() {
 
           <div className="border-t border-gray-100 dark:border-gray-800" />
 
-          {/* TTS Provider */}
-          <div>
-            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">语音服务商</h3>
-            <div className="grid grid-cols-2 gap-2 mb-4">
-              {TTS_PROVIDERS.map((prov) => (
-                <button
-                  key={prov.value}
-                  onClick={() => updateLocalSetting('ttsProvider', prov.value)}
-                  className={`p-3 rounded-xl text-left transition-all border ${
-                    localSettings.ttsProvider === prov.value
-                      ? 'bg-ios-blue/10 border-ios-blue shadow-sm'
-                      : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-ios-blue/50'
-                  }`}
-                >
-                  <span className="text-lg">{prov.icon}</span>
-                  <p className={`text-sm font-medium mt-1 ${localSettings.ttsProvider === prov.value ? 'text-ios-blue' : 'text-gray-700 dark:text-gray-300'}`}>
-                    {prov.label}
-                  </p>
-                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{prov.desc}</p>
-                </button>
-              ))}
-            </div>
-
-            {/* Cloud TTS key fields */}
-            {localSettings.ttsProvider !== 'web-speech' && (
-              <CloudTTSConfig
-                provider={localSettings.ttsProvider}
-                settings={localSettings}
-                onChange={updateLocalSetting}
-                showKeys={showCloudKeys}
-                onToggleKey={toggleCloudKey}
-              />
-            )}
-
-            {/* Cloud voice selection */}
-            {localSettings.ttsProvider !== 'web-speech' && TONE_PRESETS[localSettings.ttsProvider] && (
-              <div className="mt-4">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  默认音色
-                </label>
-                <select
-                  value={localSettings.cloudVoiceId || ''}
-                  onChange={(e) => updateLocalSetting('cloudVoiceId', e.target.value)}
-                  className="ios-input"
-                >
-                  <option value="">-- 选择音色 --</option>
-                  {TONE_PRESETS[localSettings.ttsProvider].map((tone) => (
-                    <option key={tone.id} value={tone.id}>
-                      {tone.name} - {tone.desc} ({tone.gender === 'female' ? '女' : '男'})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+          {/* 记忆系统成本控制 */}
+          <div className="space-y-3">
+            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">记忆系统</h3>
+            <p className="text-xs text-gray-400 dark:text-gray-500">
+              DeepSeek 定价：输入 1元/百万token，输出 2元/百万token。所有增强功能异步执行，不阻塞正常聊天。
+            </p>
+            <button
+              onClick={() => setShowCostControl(true)}
+              className="ios-button-secondary text-sm py-2.5 w-full"
+            >
+              💰 成本控制面板
+            </button>
           </div>
-
-          <div className="border-t border-gray-100 dark:border-gray-800" />
-
-          <VoiceSettings />
 
           <div className="border-t border-gray-100 dark:border-gray-800" />
 
@@ -221,6 +242,36 @@ export default function SettingsPanel() {
             </button>
           </div>
 
+          <div className="border-t border-gray-100 dark:border-gray-800" />
+
+          {/* 开发者工具 */}
+          <div className="space-y-3">
+            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">开发者工具</h3>
+            <button
+              onClick={() => setView('database-center')}
+              className="ios-button-secondary text-sm py-2.5 w-full flex items-center justify-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+              </svg>
+              角色数据库
+            </button>
+            <button
+              onClick={() => setView('memory-dashboard')}
+              className="ios-button-secondary text-sm py-2.5 w-full flex items-center justify-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 19V6l12-3v13M9 19c0 1.657-1.343 3-3 3s-3-1.343-3-3 1.343-3 3-3 3 1.343 3 3zm12-3c0 1.657-1.343 3-3 3s-3-1.343-3-3 1.343-3 3-3 3 1.343 3 3z" />
+              </svg>
+              记忆仪表盘
+            </button>
+          </div>
+
+          <div className="border-t border-gray-100 dark:border-gray-800" />
+
+          {/* 关于与更新 */}
+          <UpdateChecker />
+
           <div className="flex gap-3 pt-2">
             <button
               onClick={() => setView('chat')}
@@ -234,152 +285,11 @@ export default function SettingsPanel() {
           </div>
         </div>
       </div>
-    </div>
-  )
-}
 
-// 云 TTS 配置子组件
-function CloudTTSConfig({ provider, settings, onChange, showKeys, onToggleKey }) {
-  if (provider === 'aliyun') {
-    return (
-      <div className="space-y-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-xl">
-        <PasswordField
-          label="AccessKey ID"
-          value={settings.aliyunAccessKeyId}
-          onChange={(v) => onChange('aliyunAccessKeyId', v)}
-          placeholder="LTAI..."
-          show={showKeys.aliyunAccessKeyId}
-          onToggle={() => onToggleKey('aliyunAccessKeyId')}
-        />
-        <PasswordField
-          label="AccessKey Secret"
-          value={settings.aliyunAccessKeySecret}
-          onChange={(v) => onChange('aliyunAccessKeySecret', v)}
-          placeholder="..."
-          show={showKeys.aliyunAccessKeySecret}
-          onToggle={() => onToggleKey('aliyunAccessKeySecret')}
-        />
-        <div>
-          <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">AppKey</label>
-          <input
-            type="text"
-            value={settings.aliyunAppKey}
-            onChange={(e) => onChange('aliyunAppKey', e.target.value)}
-            placeholder="阿里云智能语音 AppKey"
-            className="ios-input"
-          />
-        </div>
-        <p className="text-xs text-gray-400 dark:text-gray-500">
-          <a href="https://nls-portal.console.aliyun.com/" target="_blank" rel="noopener noreferrer" className="text-ios-blue underline">阿里云语音服务控制台</a> 获取
-        </p>
-      </div>
-    )
-  }
-
-  if (provider === 'tencent') {
-    return (
-      <div className="space-y-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-xl">
-        <PasswordField
-          label="SecretId"
-          value={settings.tencentSecretId}
-          onChange={(v) => onChange('tencentSecretId', v)}
-          placeholder="AKID..."
-          show={showKeys.tencentSecretId}
-          onToggle={() => onToggleKey('tencentSecretId')}
-        />
-        <PasswordField
-          label="SecretKey"
-          value={settings.tencentSecretKey}
-          onChange={(v) => onChange('tencentSecretKey', v)}
-          placeholder="..."
-          show={showKeys.tencentSecretKey}
-          onToggle={() => onToggleKey('tencentSecretKey')}
-        />
-        <div>
-          <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">AppId</label>
-          <input
-            type="text"
-            value={settings.tencentAppId}
-            onChange={(e) => onChange('tencentAppId', e.target.value)}
-            placeholder="腾讯云 AppId"
-            className="ios-input"
-          />
-        </div>
-        <p className="text-xs text-gray-400 dark:text-gray-500">
-          <a href="https://console.cloud.tencent.com/tts" target="_blank" rel="noopener noreferrer" className="text-ios-blue underline">腾讯云语音合成控制台</a> 获取
-        </p>
-      </div>
-    )
-  }
-
-  if (provider === 'xunfei') {
-    return (
-      <div className="space-y-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-xl">
-        <div>
-          <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">AppId</label>
-          <input
-            type="text"
-            value={settings.xunfeiAppId}
-            onChange={(e) => onChange('xunfeiAppId', e.target.value)}
-            placeholder="讯飞应用 AppId"
-            className="ios-input"
-          />
-        </div>
-        <PasswordField
-          label="APIKey"
-          value={settings.xunfeiApiKey}
-          onChange={(v) => onChange('xunfeiApiKey', v)}
-          placeholder="..."
-          show={showKeys.xunfeiApiKey}
-          onToggle={() => onToggleKey('xunfeiApiKey')}
-        />
-        <PasswordField
-          label="APISecret"
-          value={settings.xunfeiApiSecret}
-          onChange={(v) => onChange('xunfeiApiSecret', v)}
-          placeholder="..."
-          show={showKeys.xunfeiApiSecret}
-          onToggle={() => onToggleKey('xunfeiApiSecret')}
-        />
-        <p className="text-xs text-gray-400 dark:text-gray-500">
-          <a href="https://console.xfyun.cn/services/tts" target="_blank" rel="noopener noreferrer" className="text-ios-blue underline">讯飞开放平台</a> 获取
-        </p>
-      </div>
-    )
-  }
-
-  return null
-}
-
-function PasswordField({ label, value, onChange, placeholder, show, onToggle }) {
-  return (
-    <div>
-      <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{label}</label>
-      <div className="relative">
-        <input
-          type={show ? 'text' : 'password'}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder}
-          className="ios-input pr-10"
-        />
-        <button
-          type="button"
-          onClick={onToggle}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
-        >
-          {show ? (
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M15 12a3 3 0 01-3 3m0 0l7.5-7.5M6.5 6.5l2.5 2.5" />
-            </svg>
-          ) : (
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-            </svg>
-          )}
-        </button>
-      </div>
+      {/* Cost control panel */}
+      {showCostControl && (
+        <CostControlPanel onClose={() => setShowCostControl(false)} />
+      )}
     </div>
   )
 }

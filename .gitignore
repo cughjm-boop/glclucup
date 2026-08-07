@@ -11,3 +11,15 @@ android/build/
 android/app/build/
 android/captures/
 android/.idea/
+# 临时脚本/调试脚本（迁移期产物，不进历史）
+*.zip
+*.bak
+*.py
+*.txt
+*.html
+# PWA 静态文件由构建产物自动生成（如果是 dev 手动放的就忽略）
+public/manifest.json
+public/sw.js
+public/icon-*.png
+public/*.zip
+public/*.html

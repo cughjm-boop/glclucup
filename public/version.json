@@ -1,0 +1,9 @@
+{
+  "versionCode": 3,
+  "versionName": "1.2.0",
+  "downloadUrl": "https://gofile.io/d/azez8B",
+  "releaseNotes": "新增 ASR 语音识别自动转写；新增音频文本匹配；新增手动修正文本入口；修复「音频内容和文本相似度过低」训练报错",
+  "forceUpdate": false,
+  "fileSize": 1468000,
+  "md5": ""
+}

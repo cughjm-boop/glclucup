@@ -1,0 +1,10 @@
+{
+  "description": "头发字段标准模板",
+  "fields": {
+    "hair": {
+      "type": "string",
+      "required": true,
+      "description": "头发设计拆解完整原文，包含发色、发型、刘海、发尾、发丝、发饰等"
+    }
+  }
+}

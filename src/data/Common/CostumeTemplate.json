@@ -1,0 +1,30 @@
+{
+  "description": "服装字段标准模板",
+  "fields": {
+    "outfit": {
+      "type": "string",
+      "required": true,
+      "description": "服装设计拆解完整原文"
+    },
+    "hair": {
+      "type": "string",
+      "required": true,
+      "description": "头发设计拆解完整原文"
+    },
+    "accessories": {
+      "type": "string",
+      "required": true,
+      "description": "配饰描述"
+    },
+    "other_features": {
+      "type": "string",
+      "required": true,
+      "description": "整体设计理念、配色方案、材质总览、设计关键词"
+    },
+    "style": {
+      "type": "string",
+      "required": true,
+      "description": "服装风格标签，如日常、约会、战斗、礼服、泳装等"
+    }
+  }
+}

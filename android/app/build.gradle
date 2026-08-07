@@ -3,12 +3,21 @@ apply plugin: 'com.android.application'
 android {
     namespace = "com.aichat.app"
     compileSdk = rootProject.ext.compileSdkVersion
+    packaging {
+        resources {
+            excludes += '/commonMain/**'
+            excludes += '/nativeMain/**'
+            excludes += '/META-INF/versions/9/OSGI-INF/MANIFEST.MF'
+            excludes += '/META-INF/kotlin-project-structure-metadata.json'
+            excludes += '/META-INF/*.kotlin_module'
+        }
+    }
     defaultConfig {
         applicationId "com.aichat.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 310
+        versionName "3.1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -43,12 +52,3 @@ dependencies {
 }
 
 apply from: 'capacitor.build.gradle'
-
-try {
-    def servicesJSON = file('google-services.json')
-    if (servicesJSON.text) {
-        apply plugin: 'com.google.gms.google-services'
-    }
-} catch(Exception e) {
-    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
-}
