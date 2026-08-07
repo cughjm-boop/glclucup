@@ -2940,18 +2940,65 @@ const useStore = create((set, get) => ({
       const sceneLocation = (sceneStateNow && (sceneStateNow.name || sceneStateNow.sceneName)) || (sceneContext && (sceneContext.name || sceneContext.sceneName)) || undefined
 
       // 开始最多 MAX_REGEN+1 次校验循环
+      //   三层校验器（A-1 合并产出 filterDropped/filterRemarks）
+      //   1) sceneReplyValidator  = Chat Scene Engine V3 — 场景/物品/角色位置
+      //   2) multiReplyValidator  = Multi Character Engine V2 — 越权/代答/角色窜线
+      //   3) canonValidator       = Canon 规则引擎 — 官方设定/OOC
       let finalUsedText = replyText
       let validated = false
       while (!validated) {
-        const sceneValidator = new ReplyValidator()
-        const sceneReport = sceneValidator.validate(
+        const sceneReplyValidator = new ReplyValidator() // 来自 core/scene/ReplyValidator.ts（import 行 L11）
+        const sceneReport = sceneReplyValidator.validate(
           finalUsedText,
           sceneStateNow,
           newActiveChars,
           character.name,
         )
-        for (const is of (sceneReport.issues || [])) {
-          pushIssueToRemarks('SceneEngine', is, is.level || 'warning')
+
+        // ===== A-1：Scene/ReplyValidator 输出适配成统一 issues 形态 =====
+        //   core/scene 的 API 是 errors: string[] / sceneValidation.errors: {type,message,detail} /
+        //   characterValidation.errors: string[]，而 pushIssueToRemarks 需要 {level,type,message}。
+        //   修复前：循环 `sceneReport.issues || []` 永远是空（scene 校验的问题不会进折叠日志）。
+        const SEVERE_TYPES = new Set(['location_conflict', 'character_not_present', 'scene_locked'])
+        const sceneIssues = []
+        // 1) sceneValidation 结构化错误（含 type/message）
+        if (sceneReport.sceneValidation && Array.isArray(sceneReport.sceneValidation.errors)) {
+          for (const e of sceneReport.sceneValidation.errors) {
+            sceneIssues.push({
+              level: SEVERE_TYPES.has(e.type) ? 'error' : 'warning',
+              type: e.type || 'scene_violation',
+              message: e.message || String(e || ''),
+            })
+          }
+        }
+        // 2) sceneValidation 警告（不影响 passed，但推给折叠条看）
+        if (sceneReport.sceneValidation && Array.isArray(sceneReport.sceneValidation.warnings)) {
+          for (const w of sceneReport.sceneValidation.warnings) {
+            sceneIssues.push({
+              level: 'warning',
+              type: w.type || 'scene_warning',
+              message: w.message || String(w || ''),
+            })
+          }
+        }
+        // 3) characterValidation 错误串
+        if (sceneReport.characterValidation && Array.isArray(sceneReport.characterValidation.errors)) {
+          for (const msg of sceneReport.characterValidation.errors) {
+            sceneIssues.push({ level: 'error', type: 'character_violation', message: String(msg) })
+          }
+        }
+        // 4) 顶层 errors 兜底（去重：若上面 structured 已包含则跳过重复 message）
+        if (Array.isArray(sceneReport.errors)) {
+          const seenMessages = new Set(sceneIssues.map((x) => String(x.message)))
+          for (const msg of sceneReport.errors) {
+            const txt = String(msg)
+            if (!seenMessages.has(txt)) {
+              sceneIssues.push({ level: 'warning', type: 'scene_reply_error', message: txt })
+            }
+          }
+        }
+        for (const is of sceneIssues) {
+          pushIssueToRemarks('SceneEngine', is, is.level)
         }
 
         let multiReport = null
