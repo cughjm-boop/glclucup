@@ -40,6 +40,8 @@ const STORAGE_KEYS = {
   DISPATCHER_LOG_MAP: 'ai-chat-dispatcher-log-map-v1',
   // C-2：长沉默客串自动退场用户偏好
   AUTO_DISMISS_SETTINGS: 'ai-chat-auto-dismiss-settings-v1',
+  // 角色衣橱数据持久化
+  WARDROBE_DATA: 'ai-chat-wardrobe-data', // { [characterId]: { [outfitName]: OutfitData } }
 }
 
 export function loadFromStorage(key) {

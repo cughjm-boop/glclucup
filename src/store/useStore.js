@@ -1234,7 +1234,7 @@ const useStore = create((set, get) => ({
   // 角色实时状态快照（按角色ID存储）
   characterState: loadFromStorage(STORAGE_KEYS.CHARACTER_STATE) || {}, // { [characterId]: { position, clothing, action, heldItems, timestamp } }
   // 角色衣橱数据（按角色ID存储，从 sr_characters.json 加载并可由用户自定义）
-  wardrobeData: {}, // { [characterId]: { "默认": { outfit, hair, accessories, other_features, style }, ... } }
+  wardrobeData: loadFromStorage(STORAGE_KEYS.WARDROBE_DATA) || {}, // { [characterId]: { "默认": { outfit, hair, accessories, other_features, style }, ... } }
   // 当前选中服装（按角色ID存储）
   currentOutfit: loadFromStorage(STORAGE_KEYS.CURRENT_OUTFIT) || {}, // { [characterId]: "默认" }
   // 多人对话：当前在场的额外角色（按主角色ID存储，不含主角色本人）
@@ -1755,6 +1755,7 @@ const useStore = create((set, get) => ({
     if (srChar && srChar.wardrobe) {
       wardrobeData[characterId] = JSON.parse(JSON.stringify(srChar.wardrobe))
       set({ wardrobeData })
+      saveToStorage(STORAGE_KEYS.WARDROBE_DATA, wardrobeData)
     }
   },
 
@@ -1790,6 +1791,7 @@ const useStore = create((set, get) => ({
       },
     }
     set({ wardrobeData })
+    saveToStorage(STORAGE_KEYS.WARDROBE_DATA, wardrobeData)
   },
 
   /**
@@ -1803,6 +1805,7 @@ const useStore = create((set, get) => ({
     if (wardrobeData[characterId]) {
       delete wardrobeData[characterId][outfitName]
       set({ wardrobeData })
+      saveToStorage(STORAGE_KEYS.WARDROBE_DATA, wardrobeData)
     }
     // 如果当前穿的是被删除的服装，切换回默认
     if (currentOutfit[characterId] === outfitName) {

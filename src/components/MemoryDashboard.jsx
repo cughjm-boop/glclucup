@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef } from 'react'
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react'
 import useStore from '../store/useStore'
 import { getMemoryDashboardStats } from '../services/memoriesV2Service'
 import {
@@ -18,6 +18,7 @@ import {
   clearAllDailyMemories,
   MEMORY_TIERS,
   exportMemoriesV2,
+  searchMemoriesV2,
   getCleanupDays,
   setCleanupDays,
   getOwnedMemories,
@@ -156,7 +157,7 @@ export default function MemoryDashboard() {
         <BetweenTab stats={stats} relationship={relationship} onRebuild={async () => { rebuildRelationship(currentCharacterId); loadData() }} />
       )}
       {activeTab === 'library' && (
-        <LibraryTab stats={stats} timeline={timeline} />
+        <LibraryTab stats={stats} timeline={timeline} characterId={currentCharacterId} />
       )}
       {activeTab === 'others' && (
         <OthersTab characterId={currentCharacterId} mainCharName={currentChar?.name} onRefresh={loadData} />
@@ -272,50 +273,144 @@ function BetweenTab({ stats, relationship, onRebuild }) {
 }
 
 // ============= 📋 记忆库 =============
-function LibraryTab({ stats, timeline }) {
+function LibraryTab({ stats, timeline, characterId }) {
   const [activeSubTab, setActiveSubTab] = useState('timeline')
+  const [searchKeyword, setSearchKeyword] = useState('')
+  const [searchResults, setSearchResults] = useState(null)
+  const [isSearching, setIsSearching] = useState(false)
+  const debounceRef = useRef(null)
+  const isSearchActive = searchKeyword.trim().length > 0
+
+  const handleSearch = useCallback((value) => {
+    setSearchKeyword(value)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    if (!value.trim()) {
+      setSearchResults(null)
+      return
+    }
+    setIsSearching(true)
+    debounceRef.current = setTimeout(() => {
+      const results = searchMemoriesV2(characterId, value.trim())
+      setSearchResults(results)
+      setIsSearching(false)
+    }, 300)
+  }, [characterId])
+
+  // 清理
+  useEffect(() => {
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
+  }, [])
 
   return (
     <div className="space-y-4">
-      {/* 三层记忆金字塔概览 */}
-      {stats && (
-        <div className="grid grid-cols-3 gap-2">
-          {Object.entries(stats.breakdown).map(([key, count]) => {
-            const meta = TIER_META[key] || { label: key, icon: '•', color: 'text-slate-500', bg: 'bg-slate-500/10' }
-            return (
-              <div key={key} className={`rounded-lg ${meta.bg} p-3 text-center`}>
-                <div className="text-lg">{meta.icon}</div>
-                <div className={`text-xl font-bold ${meta.color}`}>{count}</div>
-                <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{meta.label}</div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* 子标签 */}
-      <div className="flex gap-1 border-b border-slate-200 dark:border-slate-700">
-        {[
-          { key: 'timeline', label: '时间线' },
-          { key: 'sources', label: '来源分布' },
-        ].map((tab) => (
+      {/* 搜索框 */}
+      <div className="relative">
+        <input
+          type="text"
+          placeholder="搜索记忆..."
+          value={searchKeyword}
+          onChange={(e) => handleSearch(e.target.value)}
+          className="w-full pl-9 pr-8 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+        />
+        <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+        {searchKeyword && (
           <button
-            key={tab.key}
-            onClick={() => setActiveSubTab(tab.key)}
-            className={`px-3 py-2 text-sm font-medium transition-colors -mb-px border-b-2 ${
-              activeSubTab === tab.key
-                ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
-                : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-            }`}
+            onClick={() => handleSearch('')}
+            className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-slate-300 dark:bg-slate-600 flex items-center justify-center text-slate-500 dark:text-slate-400 hover:bg-slate-400 dark:hover:bg-slate-500"
           >
-            {tab.label}
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
           </button>
-        ))}
+        )}
       </div>
 
-      {/* 内容 */}
-      {activeSubTab === 'timeline' && <TimelineSection timeline={timeline} />}
-      {activeSubTab === 'sources' && <SourcesSection stats={stats} />}
+      {/* 搜索结果 */}
+      {isSearchActive ? (
+        <div className="space-y-2">
+          <div className="text-xs text-slate-500 dark:text-slate-400">
+            {isSearching ? '搜索中...' : `找到 ${searchResults?.length || 0} 条结果`}
+          </div>
+          {isSearching ? (
+            <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">搜索中...</div>
+          ) : searchResults && searchResults.length > 0 ? (
+            <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+              {searchResults.map((m) => (
+                <SearchResultCard key={m.id} memory={m} characterId={characterId} />
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">
+              没有找到匹配的记忆
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          {/* 三层记忆金字塔概览 */}
+          {stats && (
+            <div className="grid grid-cols-3 gap-2">
+              {Object.entries(stats.breakdown).map(([key, count]) => {
+                const meta = TIER_META[key] || { label: key, icon: '•', color: 'text-slate-500', bg: 'bg-slate-500/10' }
+                return (
+                  <div key={key} className={`rounded-lg ${meta.bg} p-3 text-center`}>
+                    <div className="text-lg">{meta.icon}</div>
+                    <div className={`text-xl font-bold ${meta.color}`}>{count}</div>
+                    <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">{meta.label}</div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* 子标签 */}
+          <div className="flex gap-1 border-b border-slate-200 dark:border-slate-700">
+            {[
+              { key: 'timeline', label: '时间线' },
+              { key: 'sources', label: '来源分布' },
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveSubTab(tab.key)}
+                className={`px-3 py-2 text-sm font-medium transition-colors -mb-px border-b-2 ${
+                  activeSubTab === tab.key
+                    ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+                    : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* 内容 */}
+          {activeSubTab === 'timeline' && <TimelineSection timeline={timeline} />}
+          {activeSubTab === 'sources' && <SourcesSection stats={stats} />}
+        </>
+      )}
+    </div>
+  )
+}
+
+// 搜索结果卡片
+function SearchResultCard({ memory, characterId }) {
+  const tierMeta = TIER_META[memory.tier] || TIER_META.daily
+  return (
+    <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
+      <div className="flex items-center gap-2 mb-1">
+        <span className={`text-xs px-1.5 py-0.5 rounded ${tierMeta.bg} ${tierMeta.color}`}>
+          {tierMeta.icon} {tierMeta.label}
+        </span>
+        {memory.category && (
+          <span className="text-[10px] text-slate-500 dark:text-slate-400">{memory.category}</span>
+        )}
+      </div>
+      <p className="text-sm text-slate-700 dark:text-slate-200">{memory.content}</p>
+      {memory.createdAt && (
+        <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">{formatMemoryTime(memory.createdAt)}</div>
+      )}
     </div>
   )
 }
@@ -331,13 +426,65 @@ function TimelineSection({ timeline }) {
     return <div className="text-center py-8 text-sm text-slate-500 dark:text-slate-400">还没有重要事件</div>
   }
 
-  // 按时间分组
-  const groups = {}
-  for (const e of events) {
-    const d = new Date(e.timestamp)
-    const key = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}`
-    if (!groups[key]) groups[key] = []
-    groups[key].push(e)
+  const now = Date.now()
+  const DAY_MS = 24 * 60 * 60 * 1000
+
+  // 折叠分组逻辑
+  const { flatItems, groups } = useMemo(() => {
+    // 分离不折叠项（里程碑/关系类型 ≈ 核心/情感记忆）
+    const noFold = []
+    const foldable = []
+    for (const e of events) {
+      if (e.type === 'milestone' || e.type === 'relation') {
+        noFold.push(e)
+      } else {
+        foldable.push(e)
+      }
+    }
+
+    // 对可折叠项按时间规则分组
+    const g = []
+    let currentGroup = null
+    const sorted = [...foldable].sort((a, b) => a.timestamp - b.timestamp)
+
+    for (const e of sorted) {
+      const diffDays = Math.floor((now - e.timestamp) / DAY_MS)
+      let groupKey
+
+      if (diffDays <= 7) {
+        // ≤7天：逐条不折叠，归入 flat
+        noFold.push(e)
+        continue
+      } else if (diffDays <= 30) {
+        // 8-30天：按天分组
+        const d = new Date(e.timestamp)
+        groupKey = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`
+      } else if (diffDays <= 180) {
+        // 1-6个月：按周分组
+        const d = new Date(e.timestamp)
+        const weekStart = new Date(d.getFullYear(), d.getMonth(), d.getDate() - d.getDay())
+        groupKey = `${d.getFullYear()}年${d.getMonth() + 1}月第${Math.ceil(d.getDate() / 7)}周`
+      } else {
+        // 6个月以上：按月分组
+        const d = new Date(e.timestamp)
+        groupKey = `${d.getFullYear()}年${d.getMonth() + 1}月`
+      }
+
+      if (currentGroup && currentGroup.key === groupKey) {
+        currentGroup.items.push(e)
+      } else {
+        if (currentGroup) g.push(currentGroup)
+        currentGroup = { key: groupKey, items: [e] }
+      }
+    }
+    if (currentGroup) g.push(currentGroup)
+
+    return { flatItems: noFold.sort((a, b) => b.timestamp - a.timestamp), groups: g }
+  }, [events, now])
+
+  const [expandedGroups, setExpandedGroups] = useState({})
+  const toggleGroup = (key) => {
+    setExpandedGroups((prev) => ({ ...prev, [key]: !prev[key] }))
   }
 
   return (
@@ -352,23 +499,66 @@ function TimelineSection({ timeline }) {
       )}
 
       {/* 时间轴列表 */}
-      <div className="relative">
-        {Object.entries(groups).map(([period, periodEvents]) => (
-          <div key={period} className="mb-6">
+      <div className="relative space-y-4">
+        {/* 不折叠项：核心档案 / 情感精华 */}
+        {flatItems.length > 0 && (
+          <div>
             <div className="sticky top-0 bg-[#f2f2f7] dark:bg-gray-950 py-1 text-xs font-semibold text-slate-600 dark:text-slate-300 mb-2">
-              {period}
+              重要时刻 · 逐条展示
             </div>
-            <ol className="relative border-l-2 border-slate-200 dark:border-slate-700 ml-2 space-y-3">
-              {periodEvents.map((e, i) => (
-                <li key={i} className="ml-4">
-                  <div className="absolute -left-[7px] w-3 h-3 rounded-full bg-indigo-500 border-2 border-[#f2f2f7] dark:border-gray-950" />
+            <ol className="relative border-l-2 border-amber-200 dark:border-amber-800 ml-2 space-y-3">
+              {flatItems.map((e, i) => (
+                <li key={e.id || i} className="ml-4">
+                  <div className="absolute -left-[7px] w-3 h-3 rounded-full bg-amber-500 border-2 border-[#f2f2f7] dark:border-gray-950" />
                   <div className="text-xs text-slate-500 dark:text-slate-400 mb-0.5">{e.timeLabel}</div>
                   <div className="text-sm text-slate-700 dark:text-slate-200">{e.description}</div>
                 </li>
               ))}
             </ol>
           </div>
-        ))}
+        )}
+
+        {/* 折叠分组：日常记忆 */}
+        {groups.length > 0 && (
+          <div>
+            <div className="sticky top-0 bg-[#f2f2f7] dark:bg-gray-950 py-1 text-xs font-semibold text-slate-600 dark:text-slate-300 mb-2">
+              日常记忆 · 按时间折叠
+            </div>
+            <div className="space-y-2">
+              {groups.map((g) => (
+                <div key={g.key} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-hidden">
+                  <button
+                    onClick={() => toggleGroup(g.key)}
+                    className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                  >
+                    <span className="font-medium text-slate-700 dark:text-slate-200">
+                      {g.key}，{g.items.length} 条记忆
+                    </span>
+                    <svg
+                      className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${expandedGroups[g.key] ? 'rotate-180' : ''}`}
+                      fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  <div
+                    className={`transition-all duration-200 overflow-hidden ${expandedGroups[g.key] ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'}`}
+                  >
+                    <ol className="relative border-l-2 border-slate-200 dark:border-slate-700 ml-4 space-y-2 pb-3">
+                      {g.items.map((e, i) => (
+                        <li key={e.id || i} className="ml-4 pr-3">
+                          <div className="absolute -left-[7px] w-2.5 h-2.5 rounded-full bg-slate-400 border-2 border-white dark:border-slate-800" />
+                          <div className="text-xs text-slate-500 dark:text-slate-400 mb-0.5">{e.timeLabel}</div>
+                          <div className="text-sm text-slate-700 dark:text-slate-200">{e.description}</div>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -447,7 +637,7 @@ function ManageTab({ stats, characterId, characterName, onRefresh, cleanupDays, 
   const handleExport = async (format) => {
     const safeName = (characterName || 'unknown').replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '_')
     const dateStr = getDateStr()
-    const result = JSON.parse(exportMemoriesV2(characterId, format))
+    const result = exportMemoriesV2(characterId)
     
     let content, filename, mimeType
     if (format === 'json') {
