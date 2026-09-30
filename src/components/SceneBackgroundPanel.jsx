@@ -1,12 +1,12 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSceneRuntime } from '../hooks/useSceneRuntime'
 import { useSceneBackgrounds } from '../hooks/useSceneBackgrounds'
 import {
-  buildSceneKeys,
   buildPrimarySceneKey,
   setSceneBackground,
   removeSceneBackground,
 } from '../services/sceneImageMap'
+import { compressImageFileToDataUrl } from '../utils/imageCompress'
 
 /**
  * SceneBackgroundPanel — 场景背景管理（纯视觉层）
@@ -27,43 +27,53 @@ export default function SceneBackgroundPanel({ character }) {
   const weather = sceneRuntime.weather || ''
 
   const primaryKey = buildPrimarySceneKey(location, area)
-  const candidateKeys = buildSceneKeys(location, area, timePeriod)
 
-  // 当前场景命中的绑定（用于预览）
-  const activeBindingKey = candidateKeys.find((k) => sceneMap[k]) || ''
+  // 目标绑定「场景ID」：默认当前场景（地点_区域），允许用户手动修改（如追加「_晚上」）
+  const [targetKey, setTargetKey] = useState('')
+  useEffect(() => {
+    setTargetKey(primaryKey || '')
+  }, [primaryKey])
+
+  // 当前目标 ID 命中的绑定（用于预览）
+  const activeBindingKey = targetKey && sceneMap[targetKey] ? targetKey : ''
 
   const [error, setError] = useState('')
   const fileInputRef = useRef(null)
 
-  const onPickFile = (e) => {
+  const onPickFile = async (e) => {
     const f = e.target.files?.[0]
     e.target.value = ''
     if (!f) return
-    if (!primaryKey) {
-      setError('当前没有有效的场景地点，无法绑定。请先在对话中进入某个场景。')
+    const key = (targetKey || '').trim()
+    if (!key) {
+      setError('请先填写（或进入场景自动生成）要绑定的场景 ID。')
       return
     }
     if (!f.type || !f.type.startsWith('image/')) {
       setError('请选择图片文件。')
       return
     }
-    // 防止 base64 撑爆 localStorage（上限约 5MB）
-    if (f.size > 3 * 1024 * 1024) {
-      setError('图片过大（超过 3MB），请压缩后再上传。')
+    if (f.size > 20 * 1024 * 1024) {
+      setError('图片过大（超过 20MB），请选择小一点的图片。')
       return
     }
-    const reader = new FileReader()
-    reader.onload = () => {
-      const src = reader.result
-      if (typeof src === 'string') {
-        setSceneBackground(primaryKey, src)
-        setError('')
-      } else {
-        setError('读取图片失败，请重试。')
-      }
+    setError('压缩中…')
+    // 等比缩小 + WebP/PNG 重编码，压缩后写入 IndexedDB（重启不丢失）
+    const dataUrl = await compressImageFileToDataUrl(f, {
+      maxSize: 1280,
+      quality: 0.82,
+      withAlpha: true,
+    })
+    if (!dataUrl) {
+      setError('读取图片失败，请重试。')
+      return
     }
-    reader.onerror = () => setError('读取图片失败，请重试。')
-    reader.readAsDataURL(f)
+    try {
+      await setSceneBackground(key, dataUrl)
+      setError('')
+    } catch {
+      setError('保存失败，请重试。')
+    }
   }
 
   const entries = Object.entries(sceneMap || {})
@@ -103,13 +113,23 @@ export default function SceneBackgroundPanel({ character }) {
           </div>
         </div>
 
-        {/* 当前绑定预览 */}
+        {/* 场景 ID 输入与绑定预览 */}
         <div>
-          <p className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-2">
-            当前绑定场景ID：{primaryKey || '（无）'}
+          <label className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-1 block">
+            绑定到场景 ID
+          </label>
+          <input
+            value={targetKey}
+            onChange={(e) => setTargetKey(e.target.value)}
+            placeholder="如：流萤家_客厅_晚上"
+            className="w-full px-3 py-2 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-xs text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-ios-blue/40 font-mono"
+          />
+          <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
+            默认自动填入当前场景（地点_区域），可手动改为更具体的 ID（如追加「_晚上」）。
           </p>
+
           {activeBindingKey ? (
-            <div className="flex items-center gap-3">
+            <div className="mt-2 flex items-center gap-3">
               <div className="w-20 h-12 rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800 ring-1 ring-black/5 dark:ring-white/5 flex-shrink-0">
                 <img src={sceneMap[activeBindingKey]} alt="" className="w-full h-full object-cover" />
               </div>
@@ -125,7 +145,7 @@ export default function SceneBackgroundPanel({ character }) {
               </button>
             </div>
           ) : (
-            <p className="text-[11px] text-gray-400 dark:text-gray-500">尚未绑定背景图，将使用内置占位渐变图。</p>
+            <p className="mt-2 text-[11px] text-gray-400 dark:text-gray-500">此 ID 尚未绑定背景图，将使用内置占位渐变图。</p>
           )}
         </div>
 
@@ -133,14 +153,14 @@ export default function SceneBackgroundPanel({ character }) {
         <div>
           <button
             onClick={() => fileInputRef.current?.click()}
-            disabled={!primaryKey}
+            disabled={!targetKey.trim()}
             className={`px-3 py-2 rounded-xl text-xs font-medium transition-opacity ${
-              primaryKey
+              targetKey.trim()
                 ? 'bg-ios-blue text-white hover:opacity-90'
                 : 'bg-gray-200 dark:bg-gray-800 text-gray-400 cursor-not-allowed'
             }`}
           >
-            上传图片并绑定到当前场景
+            上传图片并绑定到该场景 ID
           </button>
           <input
             ref={fileInputRef}
@@ -180,7 +200,7 @@ export default function SceneBackgroundPanel({ character }) {
         )}
 
         <p className="text-[11px] text-gray-400 dark:text-gray-500 leading-relaxed">
-          ⓘ 匹配优先级：地点_区域_时段 → 地点_区域 → 地点。上传的图片以 base64 存储于本地，建议压缩至 3MB 以内。
+          ⓘ 匹配优先级：地点_区域_时段 → 地点_区域 → 地点。上传后自动压缩并存储于本地（IndexedDB），重启不丢失。
         </p>
       </div>
     </div>

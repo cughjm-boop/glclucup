@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { EMOTION_TABLE } from '../core/character/CharacterStateManager'
 import { useCharacterArts } from '../hooks/useCharacterArts'
 import { setCharacterArt, removeCharacterArt } from '../services/characterArtMap'
+import { compressImageFileToDataUrl } from '../utils/imageCompress'
 
 /**
  * CharacterArtPanel — 角色立绘上传面板（纯视觉层，嵌套于「角色外观」）
@@ -30,7 +31,7 @@ export default function CharacterArtPanel({ character }) {
   const currentKey = `${characterId}_${emotionKey}`
   const defaultKey = `${characterId}_default`
 
-  const onPickFile = (e, key) => {
+  const onPickFile = async (e, key) => {
     const f = e.target.files?.[0]
     e.target.value = ''
     if (!f) return
@@ -42,21 +43,27 @@ export default function CharacterArtPanel({ character }) {
       setError('请选择图片文件（建议透明 PNG）。')
       return
     }
-    if (f.size > 3 * 1024 * 1024) {
-      setError('图片过大（超过 3MB），请压缩后再上传。')
+    if (f.size > 20 * 1024 * 1024) {
+      setError('图片过大（超过 20MB），请选择小一点的图片。')
       return
     }
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setCharacterArt(key, reader.result)
-        setError('')
-      } else {
-        setError('读取图片失败，请重试。')
-      }
+    setError('压缩中…')
+    // 等比缩小 + WebP/PNG 重编码，压缩后写入 IndexedDB（重启不丢失）
+    const dataUrl = await compressImageFileToDataUrl(f, {
+      maxSize: 1024,
+      quality: 0.82,
+      withAlpha: true,
+    })
+    if (!dataUrl) {
+      setError('读取图片失败，请重试。')
+      return
     }
-    reader.onerror = () => setError('读取图片失败，请重试。')
-    reader.readAsDataURL(f)
+    try {
+      await setCharacterArt(key, dataUrl)
+      setError('')
+    } catch {
+      setError('保存失败，请重试。')
+    }
   }
 
   const ownEntries = Object.entries(artMap || {}).filter(([k]) =>
@@ -160,7 +167,7 @@ export default function CharacterArtPanel({ character }) {
       )}
 
       <p className="text-[11px] text-gray-400 dark:text-gray-500 leading-relaxed">
-        ⓘ 立绘以 base64 存储于本地，建议压缩至 3MB 以内；透明 PNG 效果最佳。
+        ⓘ 上传后自动压缩并存储于本地（IndexedDB），重启不丢失；透明 PNG 效果最佳。
       </p>
     </div>
   )

@@ -1,8 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import useStore from '../store/useStore'
 import { useCharacterStateRuntime } from '../hooks/useCharacterStateRuntime'
 import { useCharacterArts } from '../hooks/useCharacterArts'
-import { resolveCharacterArt } from '../services/characterArtMap'
+import {
+  resolveCharacterArt,
+  buildCharacterArtKeys,
+  ensureCharacterArt,
+} from '../services/characterArtMap'
 
 /**
  * CharacterArt — 角色立绘渲染（纯视觉层）
@@ -14,17 +18,39 @@ import { resolveCharacterArt } from '../services/characterArtMap'
  */
 export default function CharacterArt({ characterId = null, isLandscape = false }) {
   const stateRuntime = useCharacterStateRuntime(characterId)
-  // 订阅立绘映射变化
-  useCharacterArts()
+  // 订阅立绘映射变化（映射在 service 内部读取，这里仅保证变更时触发重渲染）
+  const artMap = useCharacterArts()
   const character = useStore((s) =>
     characterId ? s.characters.find((c) => c.id === characterId) : undefined,
   )
 
   const emotionKey = stateRuntime.emotion || 'calm'
 
+  // 离开聊天界面（切换到其它视图）时释放内存缓存；回到聊天界面时重新懒加载。
+  const isChat = useStore((s) => s.view === 'chat')
+
+  // 懒加载：只加载「当前角色 + 当前情绪」所需候选立绘（按优先级，命中即止）
+  useEffect(() => {
+    if (!characterId || !isChat) return undefined
+    let cancelled = false
+    const keys = buildCharacterArtKeys(characterId, emotionKey)
+    ;(async () => {
+      for (const k of keys) {
+        if (cancelled) return
+        const src = await ensureCharacterArt(k)
+        if (cancelled) return
+        if (src) break // 命中最高优先级立绘后停止，避免多余加载
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [characterId, emotionKey, isChat])
+
+  // artMap 作为依赖信号：service 懒加载完成并 notify 后，这里重新解析缓存
   const resolvedSrc = useMemo(
     () => resolveCharacterArt(characterId, emotionKey)?.src,
-    [characterId, emotionKey],
+    [characterId, emotionKey, artMap],
   )
 
   const [failedSrc, setFailedSrc] = useState(null)
