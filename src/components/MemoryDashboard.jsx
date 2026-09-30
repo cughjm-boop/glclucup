@@ -35,6 +35,21 @@ import {
   resolveCharacterUi,
   DEFAULT_BUBBLE_COLOR_PROFILES,
 } from '../core/ui/CharacterUiRegistry'
+import ErrorBoundary from './ErrorBoundary'
+
+// 从 DEFAULT_BUBBLE_COLOR_PROFILES 对象中提取去重的 fallback 色值数组
+function getBubbleColorHexList() {
+  if (!DEFAULT_BUBBLE_COLOR_PROFILES) return []
+  const seen = new Set()
+  const result = []
+  for (const v of Object.values(DEFAULT_BUBBLE_COLOR_PROFILES)) {
+    if (v && typeof v === 'object' && v.fallback && !seen.has(v.fallback)) {
+      seen.add(v.fallback)
+      result.push(v.fallback)
+    }
+  }
+  return result
+}
 
 const SOURCE_LABELS = {
   chat: '聊天',
@@ -160,7 +175,9 @@ export default function MemoryDashboard() {
         <LibraryTab stats={stats} timeline={timeline} characterId={currentCharacterId} />
       )}
       {activeTab === 'others' && (
-        <OthersTab characterId={currentCharacterId} mainCharName={currentChar?.name} onRefresh={loadData} />
+        <ErrorBoundary message="其他角色记忆功能加载失败，请稍后重试">
+          <OthersTab characterId={currentCharacterId} mainCharName={currentChar?.name} onRefresh={loadData} />
+        </ErrorBoundary>
       )}
       {activeTab === 'manage' && (
         <ManageTab
@@ -1038,6 +1055,19 @@ function OthersTab({ characterId, mainCharName, onRefresh }) {
     }
   }, [characterId, selectedName, forceTick])
 
+  // 空状态保护：没有任何可选角色时
+  if (!selectedName || !allNames.length) {
+    return (
+      <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-6 text-center">
+        <div className="text-3xl mb-3">👥</div>
+        <div className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">暂无多人记忆 / 关系图谱数据</div>
+        <div className="text-xs text-slate-500 dark:text-slate-400">
+          添加其他角色并在多人会话中聊天后，这里将显示各角色的独立记忆
+        </div>
+      </div>
+    )
+  }
+
   const coreList = charMemories.filter((m) => m.tier === 'core')
   const emoList = charMemories.filter((m) => m.tier === 'emotional')
   const dailyList = charMemories.filter((m) => m.tier === 'daily')
@@ -1308,7 +1338,7 @@ function OthersTab({ characterId, mainCharName, onRefresh }) {
               >恢复默认</button>
             </div>
             <div className="flex flex-wrap gap-2">
-              {(DEFAULT_BUBBLE_COLOR_PROFILES || []).map((hex) => (
+              {getBubbleColorHexList().map((hex) => (
                 <button
                   key={hex}
                   onClick={() => pickBubbleColor(hex)}
