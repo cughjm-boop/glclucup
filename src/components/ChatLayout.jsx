@@ -30,6 +30,7 @@ export default function ChatLayout({ children, characterId = null }) {
       {/* 视觉层：横屏占左 45% 宽（贴左安全区），竖屏占上 30% 高（贴顶安全区） */}
       <VisualLayer
         characterId={characterId}
+        isLandscape={isLandscape}
         className={`shrink-0 ${
           isLandscape ? 'h-full w-[45%] pl-safe' : 'w-full h-[30%] pt-safe'
         }`}

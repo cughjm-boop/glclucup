@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import CostControlPanel from './CostControlPanel'
 import SceneBackgroundPanel from './SceneBackgroundPanel'
+import CharacterArtPanel from './CharacterArtPanel'
 
 // 角色外观设置（仅修改 UI，不影响角色真实数据）
 import {
@@ -355,6 +356,9 @@ export default function ChatSettingsPanel({ character, onSearch, onExport, onEdi
                       ))}
                     </div>
                   </div>
+
+                  {/* 角色立绘（情绪表情） */}
+                  <CharacterArtPanel character={character} />
 
                   {/* 按钮 */}
                   <div className="flex gap-2 justify-end pt-1">

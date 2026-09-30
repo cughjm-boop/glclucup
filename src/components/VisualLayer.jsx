@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useSceneRuntime } from '../hooks/useSceneRuntime'
 import { useSceneBackgrounds } from '../hooks/useSceneBackgrounds'
 import { resolveSceneImage } from '../services/sceneImageMap'
+import CharacterArt from './CharacterArt'
 import fallbackScene from '../assets/scenes/_placeholder.svg'
 
 /**
@@ -14,7 +15,7 @@ import fallbackScene from '../assets/scenes/_placeholder.svg'
  *
  * 该组件属于「UI 皮肤层」，只做展示，不参与任何聊天/记忆/场景引擎逻辑。
  */
-export default function VisualLayer({ className = '', characterId = null }) {
+export default function VisualLayer({ className = '', characterId = null, isLandscape = false }) {
   const sceneRuntime = useSceneRuntime(characterId)
   // 订阅背景图映射变化（映射在 service 内部读取，这里仅保证变更时触发重渲染）
   useSceneBackgrounds()
@@ -52,6 +53,9 @@ export default function VisualLayer({ className = '', characterId = null }) {
           style={{ animationDuration: '0.7s' }}
         />
       )}
+
+      {/* 角色立绘（情绪表情） */}
+      <CharacterArt characterId={characterId} isLandscape={isLandscape} />
 
       {/* 占位提示（仅当无有效背景图加载时显示，始终轻量） */}
       <div className="absolute inset-0 flex items-center justify-center select-none pointer-events-none">
