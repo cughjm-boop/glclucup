@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import CostControlPanel from './CostControlPanel'
+import SceneBackgroundPanel from './SceneBackgroundPanel'
 
 // 角色外观设置（仅修改 UI，不影响角色真实数据）
 import {
@@ -11,6 +12,7 @@ export default function ChatSettingsPanel({ character, onSearch, onExport, onEdi
   const [showExportFormats, setShowExportFormats] = useState(false)
   const [showCostControl, setShowCostControl] = useState(false)
   const [showCharacterUi, setShowCharacterUi] = useState(false)
+  const [showSceneBackground, setShowSceneBackground] = useState(false)
   // A-2：调度器过滤日志折叠条显示开关
   const showDispatcherLogs = useStore((s) => s.showDispatcherLogs)
   const setShowDispatcherLogs = useStore((s) => s.setShowDispatcherLogs)
@@ -86,15 +88,27 @@ export default function ChatSettingsPanel({ character, onSearch, onExport, onEdi
       ),
       label: '角色外观（仅 UI）',
       desc: '修改头像、昵称、聊天框颜色，不影响角色数据',
-      onClick: () => { setShowCostControl(false); setShowCharacterUi((v) => !v); setShowDispatcherLogsSection(false); setShowAutoDismissSection(false) },
+      onClick: () => { setShowCostControl(false); setShowCharacterUi((v) => !v); setShowDispatcherLogsSection(false); setShowAutoDismissSection(false); setShowSceneBackground(false) },
       expanded: showCharacterUi,
+    },
+    {
+      id: 'sceneBackground',
+      icon: (
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+        </svg>
+      ),
+      label: '场景背景',
+      desc: '上传自定义场景图，绑定到当前场景（地点/区域）',
+      onClick: () => { setShowCostControl(false); setShowCharacterUi(false); setShowDispatcherLogsSection(false); setShowAutoDismissSection(false); setShowSceneBackground((v) => !v) },
+      expanded: showSceneBackground,
     },
     {
       id: 'dispatcherLogs',
       icon: '🧾',
       label: '调度器过滤日志',
       desc: showDispatcherLogs ? '已开启：聊天页下方显示折叠条' : '已关闭：不显示越权/代答/重写记录',
-      onClick: () => { setShowCostControl(false); setShowCharacterUi(false); setShowAutoDismissSection(false); setShowDispatcherLogsSection((v) => !v) },
+      onClick: () => { setShowCostControl(false); setShowCharacterUi(false); setShowAutoDismissSection(false); setShowSceneBackground(false); setShowDispatcherLogsSection((v) => !v) },
       expanded: showDispatcherLogsSection,
     },
     {
@@ -102,7 +116,7 @@ export default function ChatSettingsPanel({ character, onSearch, onExport, onEdi
       icon: '⏲️',
       label: '长沉默客串自动退场',
       desc: autoDismissMin === 0 ? '已关闭：客串角色不会被自动送走' : `${autoDismissMin} 分钟没说话的客串会自动退场`,
-      onClick: () => { setShowCostControl(false); setShowCharacterUi(false); setShowDispatcherLogsSection(false); setShowAutoDismissSection((v) => !v) },
+      onClick: () => { setShowCostControl(false); setShowCharacterUi(false); setShowDispatcherLogsSection(false); setShowSceneBackground(false); setShowAutoDismissSection((v) => !v) },
       expanded: showAutoDismissSection,
     },
     {
@@ -358,6 +372,11 @@ export default function ChatSettingsPanel({ character, onSearch, onExport, onEdi
                     </button>
                   </div>
                 </div>
+              )}
+
+              {/* —— 场景背景管理展开 —— */}
+              {item.id === 'sceneBackground' && item.expanded && character?.id && (
+                <SceneBackgroundPanel character={character} />
               )}
             </div>
           ))}

@@ -13,7 +13,7 @@ import VisualLayer from './VisualLayer'
  * 【绝对底线】切换横竖屏只会改变根容器的 flex 方向（className），children（聊天区域）
  * 始终位于树中的同一位置，因此聊天组件不会重挂载，输入框文字、聊天记录、滚动位置原封不动。
  */
-export default function ChatLayout({ children }) {
+export default function ChatLayout({ children, characterId = null }) {
   const visualNovelMode = useStore((s) => s.settings?.visualNovelMode === true)
   const { isLandscape } = useOrientation()
 
@@ -29,6 +29,7 @@ export default function ChatLayout({ children }) {
     >
       {/* 视觉层：横屏占左 45% 宽（贴左安全区），竖屏占上 30% 高（贴顶安全区） */}
       <VisualLayer
+        characterId={characterId}
         className={`shrink-0 ${
           isLandscape ? 'h-full w-[45%] pl-safe' : 'w-full h-[30%] pt-safe'
         }`}
