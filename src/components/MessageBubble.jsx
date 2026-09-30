@@ -1,7 +1,8 @@
-import { useState, useCallback, useRef, useEffect, memo } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo, memo } from 'react'
 import { createPortal } from 'react-dom'
 import FloatingLayer, { Z_INDEX } from './FloatingLayer'
 import MessageActionMenu from './MessageActionMenu'
+import useStore from '../store/useStore'
 
 // 角色 UI 注册中心（V2）：提供 固定颜色/昵称覆盖/头像覆盖 —— 仅改 UI，不改角色真实数据
 import {
@@ -89,6 +90,48 @@ function resolveEmotionBadge(speakerId, character, guestCharacterStates = {}) {
   }
 }
 
+/**
+ * 内心独白（心理活动）展示区 —— 纯 UI 皮肤，仅负责展示记忆系统中已有的 monologue 字段。
+ * 数据缺失 / 格式错误 / 空文本 → 一律不渲染，绝不抛错。
+ */
+function InnerMonologueSection({ text }) {
+  const [expanded, setExpanded] = useState(true)
+
+  const safe = typeof text === 'string' ? text.trim() : ''
+  if (!safe) return null
+
+  const isLong = safe.length > 90
+  const display = expanded || !isLong ? safe : `${safe.slice(0, 90)}…`
+
+  return (
+    <div
+      onClick={() => isLong && setExpanded((v) => !v)}
+      className={`mt-1.5 mr-1 ml-1 select-none animate-fade-in ${isLong ? 'cursor-pointer' : 'cursor-default'}`}
+      title={isLong ? (expanded ? '点击收起内心独白' : '点击展开内心独白') : undefined}
+      role={isLong ? 'button' : undefined}
+      tabIndex={isLong ? 0 : undefined}
+      onKeyDown={isLong ? (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          setExpanded((v) => !v)
+        }
+      } : undefined}
+    >
+      <div className="flex items-start gap-1.5 pl-2.5 border-l-2 border-gray-300/70 dark:border-gray-700">
+        <span className="text-[13px] leading-[1.5] opacity-70 shrink-0" aria-hidden="true">💭</span>
+        <span className="text-[12.5px] leading-[1.55] italic text-gray-500 dark:text-gray-400 whitespace-pre-wrap break-words">
+          {display}
+        </span>
+      </div>
+      {isLong && (
+        <span className="block ml-7 mt-0.5 text-[10px] text-gray-400/80 dark:text-gray-500/80">
+          {expanded ? '点击收起' : '点击展开'}
+        </span>
+      )}
+    </div>
+  )
+}
+
 const MessageBubble = memo(function MessageBubble({
   message,
   character,
@@ -149,6 +192,26 @@ const MessageBubble = memo(function MessageBubble({
     }
     return ''
   })()
+
+  // ===== 内心独白（心理活动）：读取记忆系统既有字段，绝不在 AI 回复文本中解析 =====
+  const monologueText = useStore((s) => {
+    const m = s.enhancedMemories?.[speakerId]?.monologue
+    if (m && typeof m.content === 'string' && m.content.trim()) return m.content.trim()
+    return null
+  })
+
+  // 仅在该发言人「最近一条」未撤回的 AI 回复下方展示，避免每条消息重复出现
+  const showMonologue = useMemo(() => {
+    if (isUser || isRecalled || !monologueText) return false
+    if (!Array.isArray(allMessages) || allMessages.length === 0) return false
+    for (let i = allMessages.length - 1; i >= 0; i--) {
+      const m = allMessages[i]
+      if (m.role !== 'assistant' || m.recalled) continue
+      const sid = resolveSpeakerId(m, character, guestCharacterStates)
+      if (sid === speakerId) return m.id === message.id
+    }
+    return false
+  }, [isUser, isRecalled, monologueText, allMessages, speakerId, character, guestCharacterStates, message.id])
 
   const [showFullTime, setShowFullTime] = useState(false)
   const [menuState, setMenuState] = useState({ open: false, position: { x: 0, y: 0 } })
@@ -425,6 +488,9 @@ const MessageBubble = memo(function MessageBubble({
               )}
             </div>
           )}
+
+          {/* 内心独白（心理活动）展示区 —— 仅 AI 回复，且存在有效 monologue 数据时渲染 */}
+          {showMonologue && <InnerMonologueSection text={monologueText} />}
         </div>
       </div>
 
