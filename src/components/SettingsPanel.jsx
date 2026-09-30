@@ -63,6 +63,31 @@ export default function SettingsPanel() {
                 </button>
               ))}
             </div>
+
+            {/* 视觉小说模式 */}
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-gray-900 dark:text-gray-100">视觉小说模式</div>
+                <div className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                  开启后，聊天界面将显示场景视觉层（角色立绘 / 场景背景），并支持横竖屏双形态布局。
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={!!localSettings.visualNovelMode}
+                onClick={() => updateLocalSetting('visualNovelMode', !localSettings.visualNovelMode)}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                  localSettings.visualNovelMode ? 'bg-ios-blue' : 'bg-gray-300 dark:bg-gray-700'
+                }`}
+              >
+                <span
+                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                    localSettings.visualNovelMode ? 'translate-x-5' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </div>
           </div>
 
           <div className="border-t border-gray-100 dark:border-gray-800" />

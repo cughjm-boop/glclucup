@@ -5,6 +5,7 @@ import RecentSummonChips from './RecentSummonChips'
 import EmptyState from './EmptyState'
 import ChatSettingsPanel from './ChatSettingsPanel'
 import ChatSearch from './ChatSearch'
+import ChatLayout from './ChatLayout'
 import useStore from '../store/useStore'
 import { useSceneRuntime } from '../hooks/useSceneRuntime'
 import { useCharacterStateRuntime } from '../hooks/useCharacterStateRuntime'
@@ -347,7 +348,8 @@ export default function ChatWindow() {
   const hasMessages = charMessages.length > 0
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#f2f2f7] dark:bg-gray-950 overflow-hidden">
+    <ChatLayout>
+      <div className="flex-1 flex flex-col h-full bg-[#f2f2f7] dark:bg-gray-950 overflow-hidden">
       {/* Chat header */}
       <div className="flex-shrink-0 bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl border-b border-gray-100 dark:border-gray-800 px-3 sm:px-4 py-2.5 sm:py-3 pt-safe">
         <div className="flex items-center gap-2 sm:gap-3">
@@ -752,7 +754,8 @@ export default function ChatWindow() {
           ))}
         </div>
       )}
-    </div>
+      </div>
+    </ChatLayout>
   )
 }
 
