@@ -28,7 +28,6 @@ import {
 import {
   getCharacterNameList,
   findCharacter,
-  getCharacterProfile,
 } from '../services/characterDataService'
 import {
   getCharacterUiRegistry,
@@ -1192,7 +1191,9 @@ function OthersTab({ characterId, mainCharName, onRefresh }) {
   }
 
   // 官方锁定字段：身份、基本信息、性格、战斗、默认服装 —— 只读
-  const officialProfileText = getCharacterProfile(selectedName)
+  const officialProfileSummary = official
+    ? (official.story_summary || official.greeting || `${official.identity || ''} · ${official.personality || ''}` || '暂无简介')
+    : ''
   const officialIdentity = official?.identity || official?.官方档案?.身份 || ''
   const officialBasic = official?.基本信息 || official?.官方档案?.基本信息 || ''
   const officialPersonality = official?.personality || official?.性格 || official?.官方档案?.性格 || ''
@@ -1268,7 +1269,7 @@ function OthersTab({ characterId, mainCharName, onRefresh }) {
               )}
             </div>
             <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">
-              {officialProfileText || '未在 sr_characters.json 中找到该角色档案（仅为临时客串角色）'}
+              {officialProfileSummary || '未在 sr_characters.json 中找到该角色档案（仅为临时客串角色）'}
             </div>
             <div className="grid grid-cols-4 gap-2 mt-3">
               <StatCell label="总计记忆" value={charMemories.length} />
